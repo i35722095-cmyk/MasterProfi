@@ -48,6 +48,9 @@ def review_quote(
         warnings.append(f"Исключены позиции без валидных размеров: {len(invalid)}")
     if manual_items:
         warnings.append(f"Требуют ручного расчёта и не включены в итог: {len(manual_items)}")
+    replacement_items = [item for item in priced if item.raw.get("customer_replacement")]
+    if replacement_items:
+        warnings.append(f"В КП явно указаны согласованные замены: {len(replacement_items)}")
 
     product_total = sum(item.line_total for item in priced)
     if path.suffix.lower() != ".pdf" or not path.is_file() or path.stat().st_size == 0:
@@ -67,6 +70,12 @@ def review_quote(
         errors.append("В PDF отсутствует итоговая строка")
     if manual_items and "ручн" not in text:
         errors.append("В PDF отсутствует предупреждение о ручном расчёте")
+    if replacement_items and "замена материала" not in text:
+        errors.append("В PDF отсутствует предупреждение о замене материала")
+    for item in replacement_items:
+        replacement = str(item.raw["customer_replacement"].get("replacement", "")).lower()
+        if replacement and replacement not in text:
+            errors.append(f"{item.source_ref}: выбранная альтернатива не указана в PDF")
     digits = re.sub(r"\D", "", text)
     expected_total = f"{product_total:.2f}".replace(".", "")
     if expected_total not in digits:
@@ -83,6 +92,7 @@ def review_quote(
             "unresolved_items": len(unresolved),
             "invalid_items": len(invalid),
             "manual_items": len(manual_items or []),
+            "replacement_items": len(replacement_items),
             "product_total": product_total,
             "pdf_pages": page_count,
             "discount_absent": "скидка" not in text,

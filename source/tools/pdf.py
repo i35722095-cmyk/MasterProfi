@@ -64,6 +64,14 @@ def _description(item: QuoteItem) -> str:
         text = "<br/>".join(lines)
     if item.note.startswith("Аналог:"):
         text += "<br/>" + item.note.split(";")[0]
+    replacement = item.raw.get("customer_replacement")
+    if replacement:
+        original = escape(str(replacement.get("original") or "исходный материал"))
+        selected = escape(str(replacement.get("replacement") or "выбранная альтернатива"))
+        text += (
+            '<br/><font color="#9C5700"><b>ЗАМЕНА МАТЕРИАЛА:</b> '
+            f'«{original}» → «{selected}»</font>'
+        )
     return text
 
 
@@ -174,6 +182,13 @@ def create_quote_pdf(
             "и не включены в итоговую сумму:<br/>" + manual_lines,
             warning,
         ))
+    replacement_count = sum(bool(item.raw.get("customer_replacement")) for item in items)
+    if replacement_count:
+        story.append(Paragraph(
+            "ВНИМАНИЕ: в предложении есть согласованные альтернативы. "
+            "Замены явно указаны в выделенных строках таблицы.",
+            warning,
+        ))
 
     table_data: list[list[Any]] = [[
         Paragraph("№", small),
@@ -207,6 +222,12 @@ def create_quote_pdf(
         ("TOPPADDING", (0, 0), (-1, -1), 1.5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
     ]))
+    for row_index, item in enumerate(items, 1):
+        if item.raw.get("customer_replacement"):
+            products.setStyle(TableStyle([
+                ("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#FFF2CC")),
+                ("BOX", (0, row_index), (-1, row_index), 1.1, colors.HexColor("#C65911")),
+            ]))
     story.extend([products, Spacer(1, 3 * mm)])
 
     total = sum(item.line_total for item in items)

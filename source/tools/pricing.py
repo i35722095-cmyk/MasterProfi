@@ -117,9 +117,13 @@ def _matrix_price_cached(price_path_str: str, _price_version: int, sheet_name: s
     return float(price), provenance
 
 
+def _vertical_material_label(item: QuoteItem) -> str:
+    value = normalize(f"{item.fabric} {item.color}")
+    return normalize(re.sub(r"\b(?:жалюзи|тканевые|вертикальные)\b", " ", value, flags=re.I))
+
+
 def _vertical_material_query(item: QuoteItem) -> str:
-    value = normalize_key(f"{item.fabric} {item.color}").replace("O", "О")
-    return normalize(re.sub(r"\b(?:ЖАЛЮЗИ|ТКАНЕВЫЕ|ВЕРТИКАЛЬНЫЕ)\b", " ", value))
+    return normalize_key(_vertical_material_label(item)).replace("O", "О")
 
 
 def _vertical_collection_names(value: Any) -> list[str]:
@@ -315,6 +319,7 @@ def price_items(items: list[QuoteItem], config: dict[str, Any], db: KnowledgeBas
             if price is None:
                 suggestions = vertical_price_suggestions(price_path, item)
                 if suggestions:
+                    item.raw["vertical_pricing_original"] = _vertical_material_label(item)
                     item.raw["vertical_pricing_query"] = _vertical_material_query(item)
                     item.raw["pricing_suggestions"] = suggestions
                     item.note = "Точного названия коллекции в прайсе нет; найдены только похожие варианты"

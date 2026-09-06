@@ -113,6 +113,10 @@ def apply_supported_choice(unresolved: list[QuoteItem], choice_key: str) -> int:
                     "row": row,
                     "collection": suggestion["collection"],
                 }
+                item.raw["customer_replacement"] = {
+                    "original": str(item.raw.get("vertical_pricing_original") or item.raw.get("vertical_pricing_query") or item.name),
+                    "replacement": suggestion["collection"],
+                }
                 item.note = f"По подтверждению пользователя: рассчитано как «{suggestion['collection']}»"
                 resolved += 1
         return resolved

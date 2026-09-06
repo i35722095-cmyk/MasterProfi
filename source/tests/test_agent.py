@@ -13,8 +13,9 @@ from source.core.config import ROOT, load_agent_config, load_llm_config
 from source.core.models import QuoteItem
 from source.core.naming import job_folder_name, quote_filename, slug
 from source.memory.knowledge import KnowledgeBase, initialize_knowledge
+from source.tools.pdf import create_quote_pdf
 from source.tools.pricing import local_price_file, price_items, vertical_price, vertical_price_suggestions
-from source.tools.reviewer import _contains_temporary_service
+from source.tools.reviewer import _contains_temporary_service, review_quote
 from source.tools.tz_parser import extract_records, parse_tz
 from source.ui.dialogue import apply_supported_choice, build_options
 
@@ -168,16 +169,47 @@ def test_partial_vertical_match_requires_user_choice() -> None:
     suggestions = vertical_price_suggestions(source, item)
     assert suggestions[0]["collection"] == "ЛАЙН II"
     item.raw["vertical_pricing_query"] = "ЛАЙН 32, Т.БЕЖЕВЫЙ NEW"
+    item.raw["vertical_pricing_original"] = "Лайн 32, т.бежевый NEW"
     item.raw["pricing_suggestions"] = suggestions
     options = build_options([item])
     assert options[0]["label"].startswith("Рассчитать как «ЛАЙН II»")
     assert options[-1]["key"] == "defer"
 
     assert apply_supported_choice([item], options[0]["key"]) == 1
+    assert item.raw["customer_replacement"] == {
+        "original": "Лайн 32, т.бежевый NEW",
+        "replacement": "ЛАЙН II",
+    }
     price, category, source_text = vertical_price(source, item, 81)
     assert price == 13870
     assert category == "E"
     assert "выбор пользователя" in source_text
+
+
+def test_customer_replacement_is_highlighted_and_reviewed_in_pdf() -> None:
+    item = QuoteItem(
+        "docx:1:2",
+        "Жалюзи Тканевые Лайн 32, т.бежевый NEW",
+        2,
+        area_m2=9.25,
+        fabric="Жалюзи Тканевые",
+        color="Лайн 32, т.бежевый NEW",
+        category="E",
+        price_rub=13870,
+        price_source="Локальный прайс / Вертикальные / ЛАЙН II / выбор пользователя",
+        raw={
+            "customer_replacement": {
+                "original": "Лайн 32, т.бежевый NEW",
+                "replacement": "ЛАЙН II",
+            }
+        },
+    )
+    with TemporaryDirectory() as temporary:
+        pdf = create_quote_pdf(Path("ТЗ.docx"), [item], load_agent_config(), Path(temporary))
+        review = review_quote(pdf, [item], [], [], load_agent_config())
+        assert review.ok, review.errors
+        assert review.checks["replacement_items"] == 1
+        assert any("замены" in warning for warning in review.warnings)
 
 
 def test_procurement_docx_requires_only_angular_rule() -> None:
@@ -401,6 +433,7 @@ if __name__ == "__main__":
     test_vertical_blinds_area_pricing()
     test_vertical_price_matches_material_inside_catalog_cell()
     test_partial_vertical_match_requires_user_choice()
+    test_customer_replacement_is_highlighted_and_reviewed_in_pdf()
     test_procurement_docx_requires_only_angular_rule()
     test_manual_calculation_report_identifies_skipped_item()
     test_bnt_electrics_pdf_pricing()
