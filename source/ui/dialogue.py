@@ -54,10 +54,10 @@ def ask_user(
     )
     options = build_options(unresolved)
     if len(options) == 1 and options[0]["key"] == "defer":
-        logger("Нет безопасного варианта выбора; формирую отчёт для специалиста без запроса Qwen.")
+        logger("Нет безопасного варианта выбора; формирую отчёт для специалиста без запроса к модели.")
         return None
     question = llm.clarification_question([asdict(item) for item in unresolved], fallback)
-    print("\n--- Уточнение от Qwen ---", flush=True)
+    print("\n--- Уточнение от модели ---", flush=True)
     print(question, flush=True)
     selected_index = choose_option([option["label"] for option in options])
     if selected_index is None:

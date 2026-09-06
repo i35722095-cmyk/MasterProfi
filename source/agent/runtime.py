@@ -41,6 +41,10 @@ def _review_report_paths(context: TaskContext) -> tuple[Path, Path]:
     return context.output_dir / "Требуется_уточнение.txt", context.output_dir / "Требуется_уточнение.json"
 
 
+def _manual_report_paths(context: TaskContext) -> tuple[Path, Path]:
+    return context.output_dir / "Ручной_расчет.txt", context.output_dir / "Ручной_расчет.json"
+
+
 def _item_size_for_report(item: Any) -> str:
     if item.raw.get("variant") == "angular_unverified":
         raw_text = str(item.raw.get("raw_text", ""))
@@ -133,11 +137,45 @@ def requires_review_text(source: Path, priced: list[Any], unresolved: list[Any],
     return "\n".join(lines) + "\n"
 
 
+def manual_calculation_text(source: Path, priced: list[Any], manual_items: list[Any]) -> str:
+    lines = [
+        "КП СФОРМИРОВАНО ЧАСТИЧНО: НУЖНА РУЧНАЯ КОРРЕКТИРОВКА",
+        "",
+        f"ТЗ: {source.name}",
+        f"Автоматически рассчитано позиций: {len(priced)}.",
+        f"Требуют ручного расчёта: {len(manual_items)}.",
+        "",
+        "ВНИМАНИЕ: перечисленные ниже позиции не включены в сумму и таблицу сформированного КП.",
+        "Менеджеру необходимо рассчитать их вручную и добавить в КП перед отправкой клиенту.",
+        "",
+        "ПОЗИЦИИ ДЛЯ РУЧНОГО РАСЧЁТА",
+    ]
+    for index, item in enumerate(manual_items, 1):
+        lines.extend([
+            "",
+            f"{index}. {item.name}",
+            f"   Строка ТЗ: {item.source_ref}.",
+            f"   Количество: {item.quantity} шт.",
+            f"   Размер: {_item_size_for_report(item)}.",
+            f"   Комплектация: {item.system or 'не определена'}; {item.fabric or 'ткань не определена'}; {item.color or 'цвет не указан'}.",
+            f"   Причина: {item.note}.",
+        ])
+    return "\n".join(lines) + "\n"
+
+
 def _write_review_reports(context: TaskContext, report: dict[str, Any], text: str) -> tuple[Path, Path]:
     # Папку output могут очистить вручную, пока агент рассчитывает ТЗ.
     # В этом случае отчёт всё равно обязан сохраниться.
     context.output_dir.mkdir(parents=True, exist_ok=True)
     text_path, json_path = _review_report_paths(context)
+    text_path.write_text(text, encoding="utf-8")
+    json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return text_path, json_path
+
+
+def _write_manual_reports(context: TaskContext, report: dict[str, Any], text: str) -> tuple[Path, Path]:
+    context.output_dir.mkdir(parents=True, exist_ok=True)
+    text_path, json_path = _manual_report_paths(context)
     text_path.write_text(text, encoding="utf-8")
     json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return text_path, json_path
@@ -161,6 +199,7 @@ def process_file(path: Path, agent_config: dict[str, Any], llm_config: dict[str,
             "invalid": [asdict(item) for item in invalid],
         })
         dialogue = None
+        manual_items: list[Any] = []
         if unresolved and path.parent.resolve() == INPUT_DIR.resolve() and agent_config.get("interactive_clarifications", True):
             dialogue = ask_user(unresolved, llm, log)
             if dialogue:
@@ -173,6 +212,16 @@ def process_file(path: Path, agent_config: dict[str, Any], llm_config: dict[str,
                         "unresolved": [asdict(item) for item in unresolved],
                         "invalid": [asdict(item) for item in invalid],
                     })
+                elif dialogue.get("selected", {}).get("key") == "defer" and priced:
+                    manual_items = list(unresolved)
+                    unresolved = []
+                    context.save("calculation.json", {
+                        "priced": [asdict(item) for item in priced],
+                        "manual": [asdict(item) for item in manual_items],
+                        "unresolved": [],
+                        "invalid": [asdict(item) for item in invalid],
+                    })
+                    log(f"Пропущено позиций для ручного расчёта: {len(manual_items)}. Формирую КП по остальным позициям.")
 
         if unresolved or not priced:
             report = {
@@ -187,8 +236,8 @@ def process_file(path: Path, agent_config: dict[str, Any], llm_config: dict[str,
             log("КП не создано: требуется проверенное ценовое правило. Исходное ТЗ сохранено.")
             log(f"Понятный отчёт для менеджера: {text_path.relative_to(OUTPUT_DIR.parent)}")
             return False
-        output = create_quote_pdf(path, priced, agent_config, context.output_dir)
-        review = review_quote(output, priced, unresolved, invalid, agent_config)
+        output = create_quote_pdf(path, priced, agent_config, context.output_dir, manual_items=manual_items)
+        review = review_quote(output, priced, unresolved, invalid, agent_config, manual_items=manual_items)
         context.save("review.json", asdict(review))
         if not review.ok:
             rejected = context.path / f"rejected_{output.name}"
@@ -205,7 +254,25 @@ def process_file(path: Path, agent_config: dict[str, Any], llm_config: dict[str,
             context.save("result.json", report)
             log(f"Проверяющий отклонил КП: {len(review.errors)} ошибок. ТЗ сохранено.")
             return False
-        context.save("result.json", {"status": "success", "quote": str(output), "review": asdict(review)})
+        result_status = "success_with_manual_items" if manual_items else "success"
+        result: dict[str, Any] = {"status": result_status, "quote": str(output), "review": asdict(review)}
+        if manual_items:
+            manual_report = {
+                "status": "manual_calculation_required",
+                "source": path.name,
+                "quote": str(output),
+                "manual_items": [asdict(item) for item in manual_items],
+            }
+            manual_text_path, manual_json_path = _write_manual_reports(
+                context,
+                manual_report,
+                manual_calculation_text(path, priced, manual_items),
+            )
+            result["manual_report"] = str(manual_text_path)
+            result["manual_report_json"] = str(manual_json_path)
+            result["manual_items"] = [asdict(item) for item in manual_items]
+            log(f"Требуется ручная корректировка КП: {manual_text_path.relative_to(OUTPUT_DIR.parent)}")
+        context.save("result.json", result)
         log(f"КП создано и прошло проверку: {output.relative_to(OUTPUT_DIR.parent)}")
         if path.parent.resolve() == INPUT_DIR.resolve():
             path.unlink()

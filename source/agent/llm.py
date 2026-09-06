@@ -30,7 +30,7 @@ def create_llm_provider(settings: dict[str, Any], logger: Callable[[str], None] 
         from .claude_provider import ClaudeProvider
 
         return ClaudeProvider(settings, logger=logger)
-    if provider in {"deepseek", "qwen"}:
+    if provider in {"openai", "deepseek", "qwen"}:
         from .openai_compatible_provider import OpenAICompatibleProvider
 
         return OpenAICompatibleProvider(settings, logger=logger)

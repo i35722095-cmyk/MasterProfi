@@ -1,4 +1,4 @@
-"""Адаптер OpenAI-совместимого Chat Completions API (DeepSeek, Qwen через DashScope)."""
+"""Адаптер OpenAI Chat Completions и совместимых API."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _RETRYABLE_ERRORS = (urllib.error.URLError, TimeoutError, KeyError, IndexError, 
 
 
 class OpenAICompatibleProvider:
-    """Облачная модель через Chat Completions API формата OpenAI (DeepSeek, Qwen)."""
+    """Облачная модель через OpenAI-совместимый Chat Completions API."""
 
     def __init__(self, settings: dict[str, Any], logger: Callable[[str], None] = print) -> None:
         self.settings = settings

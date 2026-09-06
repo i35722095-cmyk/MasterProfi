@@ -4,6 +4,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -78,7 +79,23 @@ def _size(item: QuoteItem) -> tuple[str, str]:
     return f"{round(float(item.width_m or 0) * 1000)}×{round(float(item.height_m or 0) * 1000)}", "мм"
 
 
-def create_quote_pdf(source: Path, items: list[QuoteItem], config: dict[str, Any], output_dir: Path | None = None) -> Path:
+def _manual_item_text(item: QuoteItem) -> str:
+    if item.width_m and item.height_m:
+        size = f"{round(item.width_m * 1000)}×{round(item.height_m * 1000)} мм"
+    elif item.area_m2 is not None:
+        size = f"{item.area_m2:g} м²"
+    else:
+        size = "размер не указан"
+    return escape(f"{item.source_ref}: {item.name}; {size}; {item.quantity} шт.")
+
+
+def create_quote_pdf(
+    source: Path,
+    items: list[QuoteItem],
+    config: dict[str, Any],
+    output_dir: Path | None = None,
+    manual_items: list[QuoteItem] | None = None,
+) -> Path:
     _register_fonts()
     destination = output_dir or OUTPUT_DIR
     destination.mkdir(parents=True, exist_ok=True)
@@ -105,6 +122,16 @@ def create_quote_pdf(source: Path, items: list[QuoteItem], config: dict[str, Any
     right = ParagraphStyle("mp-right", parent=normal, alignment=TA_RIGHT)
     footer_small = ParagraphStyle("mp-footer-small", parent=normal, fontSize=7.2, leading=8.2)
     footer_right = ParagraphStyle("mp-footer-right", parent=footer_small, alignment=TA_RIGHT)
+    warning = ParagraphStyle(
+        "mp-warning",
+        parent=normal,
+        fontName="MasterProfiArial-Bold",
+        textColor=colors.HexColor("#A61B1B"),
+        borderColor=colors.HexColor("#A61B1B"),
+        borderWidth=0.8,
+        borderPadding=6,
+        spaceAfter=4 * mm,
+    )
 
     metadata = next((item.raw for item in items if item.raw.get("client") or item.raw.get("address")), {})
     client = str(metadata.get("client") or "клиент не указан в ТЗ")
@@ -140,6 +167,13 @@ def create_quote_pdf(source: Path, items: list[QuoteItem], config: dict[str, Any
         Paragraph("Расчёт произведён по предоставленным размерам.", normal),
         Spacer(1, 4 * mm),
     ]
+    if manual_items:
+        manual_lines = "<br/>".join(_manual_item_text(item) for item in manual_items)
+        story.append(Paragraph(
+            "ВНИМАНИЕ: КП требует ручной корректировки. Следующие позиции не рассчитаны "
+            "и не включены в итоговую сумму:<br/>" + manual_lines,
+            warning,
+        ))
 
     table_data: list[list[Any]] = [[
         Paragraph("№", small),

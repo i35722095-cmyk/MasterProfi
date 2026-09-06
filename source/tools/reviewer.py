@@ -23,7 +23,14 @@ def _contains_temporary_service(text: str) -> str | None:
     return None
 
 
-def review_quote(path, priced: list[QuoteItem], unresolved: list[QuoteItem], invalid: list[QuoteItem], config: dict[str, Any]) -> ReviewResult:
+def review_quote(
+    path,
+    priced: list[QuoteItem],
+    unresolved: list[QuoteItem],
+    invalid: list[QuoteItem],
+    config: dict[str, Any],
+    manual_items: list[QuoteItem] | None = None,
+) -> ReviewResult:
     errors: list[str] = []
     warnings: list[str] = []
     if unresolved:
@@ -39,6 +46,8 @@ def review_quote(path, priced: list[QuoteItem], unresolved: list[QuoteItem], inv
             errors.append(f"{item.source_ref}: потерян размер/площадь или количество")
     if invalid:
         warnings.append(f"Исключены позиции без валидных размеров: {len(invalid)}")
+    if manual_items:
+        warnings.append(f"Требуют ручного расчёта и не включены в итог: {len(manual_items)}")
 
     product_total = sum(item.line_total for item in priced)
     if path.suffix.lower() != ".pdf" or not path.is_file() or path.stat().st_size == 0:
@@ -56,6 +65,8 @@ def review_quote(path, priced: list[QuoteItem], unresolved: list[QuoteItem], inv
             page_count = 0
     if "итого" not in text:
         errors.append("В PDF отсутствует итоговая строка")
+    if manual_items and "ручн" not in text:
+        errors.append("В PDF отсутствует предупреждение о ручном расчёте")
     digits = re.sub(r"\D", "", text)
     expected_total = f"{product_total:.2f}".replace(".", "")
     if expected_total not in digits:
@@ -71,6 +82,7 @@ def review_quote(path, priced: list[QuoteItem], unresolved: list[QuoteItem], inv
             "priced_items": len(priced),
             "unresolved_items": len(unresolved),
             "invalid_items": len(invalid),
+            "manual_items": len(manual_items or []),
             "product_total": product_total,
             "pdf_pages": page_count,
             "discount_absent": "скидка" not in text,

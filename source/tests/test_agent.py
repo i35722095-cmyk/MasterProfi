@@ -8,7 +8,7 @@ from openpyxl import Workbook
 from source.agent.llm import create_llm_provider
 from source.agent.ollama_provider import OllamaProvider
 from source.agent.router import select_skill
-from source.agent.runtime import _write_review_reports, requires_review_text
+from source.agent.runtime import _write_review_reports, manual_calculation_text, requires_review_text
 from source.core.config import ROOT, load_agent_config, load_llm_config
 from source.core.models import QuoteItem
 from source.core.naming import job_folder_name, quote_filename, slug
@@ -92,7 +92,7 @@ def test_public_tools_package_has_no_circular_import() -> None:
 
 def test_pricing_without_delivery_or_installation() -> None:
     agent_config = load_agent_config()
-    llm_config = {**load_llm_config(), "url": "http://127.0.0.1:1/api/chat", "timeout_seconds": 1}
+    llm_config = {**load_llm_config("ollama"), "url": "http://127.0.0.1:1/api/chat", "timeout_seconds": 1}
     db = KnowledgeBase()
     try:
         initialize_knowledge(db)
@@ -115,7 +115,7 @@ def test_pricing_without_delivery_or_installation() -> None:
 
 def test_vertical_blinds_area_pricing() -> None:
     agent_config = load_agent_config()
-    llm_config = {**load_llm_config(), "url": "http://127.0.0.1:1/api/chat", "timeout_seconds": 1}
+    llm_config = {**load_llm_config("ollama"), "url": "http://127.0.0.1:1/api/chat", "timeout_seconds": 1}
     db = KnowledgeBase()
     try:
         initialize_knowledge(db)
@@ -143,7 +143,7 @@ def test_vertical_price_matches_material_inside_catalog_cell() -> None:
 
 def test_procurement_docx_requires_only_angular_rule() -> None:
     agent_config = load_agent_config()
-    llm_config = {**load_llm_config(), "url": "http://127.0.0.1:1/api/chat", "timeout_seconds": 1}
+    llm_config = {**load_llm_config("ollama"), "url": "http://127.0.0.1:1/api/chat", "timeout_seconds": 1}
     db = KnowledgeBase()
     try:
         initialize_knowledge(db)
@@ -168,9 +168,28 @@ def test_procurement_docx_requires_only_angular_rule() -> None:
         db.close()
 
 
+def test_manual_calculation_report_identifies_skipped_item() -> None:
+    item = QuoteItem(
+        "DOCX:10",
+        "Штора (угловая)",
+        1,
+        width_m=0.72,
+        height_m=1.72,
+        system="AMG",
+        note="Нет отдельного правила расчёта",
+        raw={"variant": "angular_unverified", "raw_text": "590 (верхний край) 720 (нижний край)"},
+    )
+    text = manual_calculation_text(Path("ТЗ.docx"), [QuoteItem("DOCX:1", "AMG", 1)], [item])
+    assert "КП СФОРМИРОВАНО ЧАСТИЧНО" in text
+    assert "Штора (угловая)" in text
+    assert "DOCX:10" in text
+    assert "не включены в сумму" in text
+    assert "добавить в КП перед отправкой" in text
+
+
 def test_bnt_electrics_pdf_pricing() -> None:
     agent_config = load_agent_config()
-    llm_config = {**load_llm_config(), "url": "http://127.0.0.1:1/api/chat", "timeout_seconds": 1}
+    llm_config = {**load_llm_config("ollama"), "url": "http://127.0.0.1:1/api/chat", "timeout_seconds": 1}
     db = KnowledgeBase()
     try:
         initialize_knowledge(db)
@@ -252,7 +271,7 @@ def test_cloud_providers_are_selected_by_config_and_require_api_key() -> None:
 
     env_var = "MASTERPROFI_TEST_MISSING_KEY"
     os.environ.pop(env_var, None)
-    for provider_name, expected_class in (("claude", ClaudeProvider), ("deepseek", OpenAICompatibleProvider), ("qwen", OpenAICompatibleProvider)):
+    for provider_name, expected_class in (("claude", ClaudeProvider), ("openai", OpenAICompatibleProvider), ("deepseek", OpenAICompatibleProvider), ("qwen", OpenAICompatibleProvider)):
         try:
             create_llm_provider({"provider": provider_name, "model": "test", "api_key_env": env_var}, logger=silent)
         except ValueError as error:
@@ -276,15 +295,16 @@ def test_cloud_providers_are_selected_by_config_and_require_api_key() -> None:
         os.environ.pop(env_var, None)
 
 
-def test_llm_config_defaults_to_ollama_and_lists_all_providers() -> None:
+def test_llm_config_defaults_to_openai_and_lists_all_providers() -> None:
     from source.core.config import list_llm_providers
 
     default_config = load_llm_config()
-    assert default_config["provider"] == "ollama"
-    assert "url" in default_config
+    assert default_config["provider"] == "openai"
+    assert default_config["api_key_env"] == "OPENAI_API_KEY"
+    assert "base_url" in default_config
 
     providers = dict(list_llm_providers())
-    assert set(providers) == {"ollama", "claude", "deepseek", "qwen"}
+    assert set(providers) == {"openai", "ollama", "claude", "deepseek", "qwen"}
 
     claude_config = load_llm_config("claude")
     assert claude_config["provider"] == "claude"
@@ -318,7 +338,7 @@ def test_user_can_choose_safe_angular_amg_rule() -> None:
         initialize_knowledge(db)
         items = parse_tz(
             ROOT / "ПримерыТЗ" / "ТЗ_рулонные шторы 2026 (2) (1).docx",
-            create_llm_provider({**load_llm_config(), "url": "http://127.0.0.1:1/api/chat", "timeout_seconds": 1}, logger=silent),
+            create_llm_provider({**load_llm_config("ollama"), "url": "http://127.0.0.1:1/api/chat", "timeout_seconds": 1}, logger=silent),
             db,
         )
         _, unresolved, _ = price_items(items, agent_config, db, logger=silent)
@@ -342,6 +362,7 @@ if __name__ == "__main__":
     test_vertical_blinds_area_pricing()
     test_vertical_price_matches_material_inside_catalog_cell()
     test_procurement_docx_requires_only_angular_rule()
+    test_manual_calculation_report_identifies_skipped_item()
     test_bnt_electrics_pdf_pricing()
     test_mounting_profile_is_not_installation_service()
     test_human_readable_result_names()
@@ -350,7 +371,7 @@ if __name__ == "__main__":
     test_router_accepts_only_supported_tz_formats()
     test_llm_provider_is_selected_by_config()
     test_cloud_providers_are_selected_by_config_and_require_api_key()
-    test_llm_config_defaults_to_ollama_and_lists_all_providers()
+    test_llm_config_defaults_to_openai_and_lists_all_providers()
     test_report_folder_is_recreated_if_removed_during_calculation()
     test_large_review_report_groups_repeated_unresolved_items()
     test_user_can_choose_safe_angular_amg_rule()
