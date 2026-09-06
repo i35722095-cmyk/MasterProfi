@@ -2,14 +2,24 @@
 
 Агент формирует коммерческие предложения по ТЗ с использованием Python. Модель для разбора ТЗ можно выбрать: локальная Qwen через Ollama либо облачные Claude, DeepSeek или Qwen через API.
 
-Для установки на новый Mac с нуля используйте [SETUP_MAC.md](SETUP_MAC.md).
+Для установки на новый Mac с нуля используйте [SETUP_MAC.md](SETUP_MAC.md); для Windows — [SETUP_WINDOWS.md](SETUP_WINDOWS.md).
 
 ## Запуск
+
+macOS:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ./run_agent.command
+```
+
+Windows (PowerShell или cmd.exe):
+
+```bat
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+run_agent.bat
 ```
 
 Если в `config/llm.toml` настроено больше одной модели, при запуске в Терминале появится меню выбора: стрелками `↑`/`↓` выберите модель и нажмите `Enter`. Без интерактивного Терминала (например, при запуске в фоне) агент использует модель, указанную в поле `provider` файла `config/llm.toml`.

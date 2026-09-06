@@ -203,6 +203,25 @@ def test_human_readable_result_names() -> None:
     assert quote_filename(source) == "КП_ТЗ-рулонные-шторы-2026-2-1.pdf"
 
 
+def test_slug_avoids_windows_reserved_device_names() -> None:
+    assert slug("con") == "con-ТЗ"
+    assert slug("COM3") == "COM3-ТЗ"
+    assert slug("lpt1") == "lpt1-ТЗ"
+    assert slug("NUL") == "NUL-ТЗ"
+    assert slug("controller") == "controller"
+
+
+def test_terminal_menu_defers_posix_imports_so_it_loads_on_windows_too() -> None:
+    from source.ui import terminal_menu
+
+    # termios/tty don't exist on Windows; they must be imported lazily inside
+    # _choose_option_posix, not at module scope, or the module itself would
+    # fail to import there.
+    assert not hasattr(terminal_menu, "termios")
+    assert not hasattr(terminal_menu, "tty")
+    assert terminal_menu.choose_option([]) is None
+
+
 def test_router_accepts_only_supported_tz_formats() -> None:
     assert select_skill(Path("ТЗ.docx")) == "make_proposal"
     try:
@@ -326,6 +345,8 @@ if __name__ == "__main__":
     test_bnt_electrics_pdf_pricing()
     test_mounting_profile_is_not_installation_service()
     test_human_readable_result_names()
+    test_slug_avoids_windows_reserved_device_names()
+    test_terminal_menu_defers_posix_imports_so_it_loads_on_windows_too()
     test_router_accepts_only_supported_tz_formats()
     test_llm_provider_is_selected_by_config()
     test_cloud_providers_are_selected_by_config_and_require_api_key()
