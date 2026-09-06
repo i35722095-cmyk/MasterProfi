@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -18,14 +19,26 @@ from ..core.models import QuoteItem
 from ..core.naming import quote_filename
 
 
-FONT_REGULAR = "/System/Library/Fonts/Supplemental/Arial.ttf"
-FONT_BOLD = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+# Системный шрифт Arial по платформам: macOS хранит его в /System/Library,
+# Windows — в C:\Windows\Fonts. Ни один шрифт не поставляется в репозитории.
+_FONT_CANDIDATES: dict[str, tuple[str, str]] = {
+    "darwin": ("/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+    "win32": (r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\arialbd.ttf"),
+}
 
 
 def _register_fonts() -> None:
-    if "MasterProfiArial" not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont("MasterProfiArial", FONT_REGULAR))
-        pdfmetrics.registerFont(TTFont("MasterProfiArial-Bold", FONT_BOLD))
+    if "MasterProfiArial" in pdfmetrics.getRegisteredFontNames():
+        return
+    regular, bold = _FONT_CANDIDATES.get(sys.platform, _FONT_CANDIDATES["darwin"])
+    if not Path(regular).exists() or not Path(bold).exists():
+        raise RuntimeError(
+            f"Не найден шрифт Arial для платформы '{sys.platform}' "
+            f"(искал {regular} и {bold}). Установите Arial или укажите путь "
+            "к другому TTF-шрифту в source/tools/pdf.py."
+        )
+    pdfmetrics.registerFont(TTFont("MasterProfiArial", regular))
+    pdfmetrics.registerFont(TTFont("MasterProfiArial-Bold", bold))
 
 
 def _money(value: int | float) -> str:
