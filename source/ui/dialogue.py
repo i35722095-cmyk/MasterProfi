@@ -36,6 +36,28 @@ def build_options(unresolved: list[QuoteItem]) -> list[dict[str, str]]:
                 "label": "Не рассчитывать: нужно отдельное правило для угловой шторы.",
             },
         ]
+    queries = {str(item.raw.get("vertical_pricing_query", "")) for item in unresolved}
+    if len(queries) == 1 and "" not in queries and all(item.raw.get("pricing_suggestions") for item in unresolved):
+        shared_rows = set.intersection(*[
+            {int(suggestion["row"]) for suggestion in item.raw["pricing_suggestions"]}
+            for item in unresolved
+        ])
+        suggestions = [
+            suggestion for suggestion in unresolved[0].raw["pricing_suggestions"]
+            if int(suggestion["row"]) in shared_rows
+        ]
+        options = [
+            {
+                "key": f"vertical_price:{suggestion['row']}",
+                "label": (
+                    f"Рассчитать как «{suggestion['collection']}»: категория {suggestion['category']}, "
+                    f"{float(suggestion['rate']):.4f} $/м²."
+                ),
+            }
+            for suggestion in suggestions[:3]
+        ]
+        options.append({"key": "defer", "label": "Не рассчитывать: отправить позиции на ручной расчёт."})
+        return options
     return [{"key": "defer", "label": "Не рассчитывать: требуется подтверждённое правило специалиста."}]
 
 
@@ -49,10 +71,17 @@ def ask_user(
         logger("Диалог с пользователем пропущен: агент запущен без интерактивного Терминала.")
         return None
 
-    fallback = _angular_question(unresolved[0]) if len(unresolved) == 1 and _is_angular_amg(unresolved[0]) else (
-        "Какое подтверждённое правило нужно применить к указанным позициям?"
-    )
     options = build_options(unresolved)
+    if options[0]["key"].startswith("vertical_price:"):
+        query = str(unresolved[0].raw.get("vertical_pricing_query", ""))
+        fallback = (
+            f"Точного совпадения для «{query}» в локальном прайсе нет. "
+            f"Какой вариант применить к {len(unresolved)} одинаковым позициям?"
+        )
+    else:
+        fallback = _angular_question(unresolved[0]) if len(unresolved) == 1 and _is_angular_amg(unresolved[0]) else (
+            "Какое подтверждённое правило нужно применить к указанным позициям?"
+        )
     if len(options) == 1 and options[0]["key"] == "defer":
         logger("Нет безопасного варианта выбора; формирую отчёт для специалиста без запроса к модели.")
         return None
@@ -71,9 +100,24 @@ def ask_user(
 
 def apply_supported_choice(unresolved: list[QuoteItem], choice_key: str) -> int:
     """Apply only a predetermined, auditable rule explicitly selected by the user."""
+    resolved = 0
+    if choice_key.startswith("vertical_price:"):
+        row = int(choice_key.split(":", 1)[1])
+        for item in unresolved:
+            suggestion = next(
+                (value for value in item.raw.get("pricing_suggestions", []) if int(value["row"]) == row),
+                None,
+            )
+            if suggestion:
+                item.raw["vertical_price_override"] = {
+                    "row": row,
+                    "collection": suggestion["collection"],
+                }
+                item.note = f"По подтверждению пользователя: рассчитано как «{suggestion['collection']}»"
+                resolved += 1
+        return resolved
     if choice_key != "angular_regular_amg":
         return 0
-    resolved = 0
     for item in unresolved:
         if _is_angular_amg(item):
             item.raw["variant"] = "angular_as_regular_amg"

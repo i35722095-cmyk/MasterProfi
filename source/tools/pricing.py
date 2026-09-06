@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+from difflib import SequenceMatcher
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -116,38 +117,97 @@ def _matrix_price_cached(price_path_str: str, _price_version: int, sheet_name: s
     return float(price), provenance
 
 
-def vertical_price(price_path: Path, item: QuoteItem, usd_rub_rate: float) -> tuple[int | None, str | None, str]:
-    query = normalize_key(f"{item.name} {item.fabric}").replace("O", "О")
-    if "ЖАЛЮЗИ" not in query or item.area_m2 is None:
-        return None, None, ""
-    if "СТЕНОВ" in query and "КРОНШТЕЙН" in query:
-        return 0, "комплектация", "Подтверждённый прецедент: ПримерыКП / КП АО «Трансинжстрой» / стеновые кронштейны без доплаты"
+def _vertical_material_query(item: QuoteItem) -> str:
+    value = normalize_key(f"{item.fabric} {item.color}").replace("O", "О")
+    return normalize(re.sub(r"\b(?:ЖАЛЮЗИ|ТКАНЕВЫЕ|ВЕРТИКАЛЬНЫЕ)\b", " ", value))
+
+
+def _vertical_collection_names(value: Any) -> list[str]:
+    names: list[str] = []
+    for raw_name in re.split(r"[,;]", normalize(value)):
+        full_name = normalize_key(raw_name).replace("O", "О")
+        if full_name:
+            names.append(full_name)
+        # Некоторые коллекции записаны прописными буквами внутри длинной ячейки.
+        for token in re.findall(r"\b[А-ЯЁA-Z]{4,}\b", raw_name):
+            normalized_token = normalize_key(token).replace("O", "О")
+            # Не превращаем «ЛАЙН II» в самостоятельное «ЛАЙН»: индекс/номер
+            # является значимой частью названия коллекции.
+            if re.match(rf"^{re.escape(normalized_token)}\s+(?:[IVX]+|\d+)\b", full_name):
+                continue
+            names.append(normalized_token)
+    return list(dict.fromkeys(names))
+
+
+def _vertical_rows(price_path: Path) -> list[dict[str, Any]]:
     sheet = load_workbook(price_path, data_only=True, read_only=True)["Вертикальные"]
-    matches: list[tuple[int, int, float, str]] = []
+    rows: list[dict[str, Any]] = []
     for row in range(7, 13):
-        collections = normalize_key(sheet.cell(row, 2).value)
         rate = sheet.cell(row, 6).value
         category = normalize(sheet.cell(row, 7).value).upper()
-        if not isinstance(rate, (int, float)):
-            continue
-        score = 0
-        for raw_name in re.split(r"[,;]", collections):
-            name = re.sub(r"\bII\b", "", normalize_key(raw_name)).replace("O", "О").strip()
-            if len(name) >= 4 and name in query:
-                score = max(score, 100 + len(name.split()))
-            # В прайсе некоторые названия объединены в одной длинной ячейке
-            # («... серый МАЛЬТА»). Ищем отдельное название, но даём ему
-            # меньший приоритет, чем точному совпадению полной фразы.
-            for token in re.findall(r"[А-ЯA-ZЁ]{4,}", name):
-                if token in query:
-                    score = max(score, len(token))
-        if score:
-            matches.append((score, row, float(rate), category))
-    if matches:
-        _, row, rate, category = max(matches)
+        if isinstance(rate, (int, float)):
+            rows.append({
+                "row": row,
+                "rate": float(rate),
+                "category": "E" if category in {"Е", "E"} else category,
+                "collections": _vertical_collection_names(sheet.cell(row, 2).value),
+            })
+    return rows
+
+
+def vertical_price_suggestions(price_path: Path, item: QuoteItem, limit: int = 3) -> list[dict[str, Any]]:
+    query = _vertical_material_query(item)
+    query_tokens = set(re.findall(r"[А-ЯA-ZЁ]{4,}", query))
+    suggestions: list[dict[str, Any]] = []
+    for row in _vertical_rows(price_path):
+        candidates: list[tuple[float, str]] = []
+        for collection in row["collections"]:
+            collection_tokens = set(re.findall(r"[А-ЯA-ZЁ]{4,}", collection))
+            overlap = len(query_tokens & collection_tokens)
+            similarity = SequenceMatcher(None, collection, query).ratio()
+            score = similarity + overlap
+            if overlap or similarity >= 0.45:
+                candidates.append((score, collection))
+        if candidates:
+            score, collection = max(candidates)
+            suggestions.append({
+                "row": row["row"],
+                "collection": collection,
+                "category": row["category"],
+                "rate": row["rate"],
+                "score": round(score, 4),
+            })
+    return sorted(suggestions, key=lambda value: (-value["score"], value["row"]))[:limit]
+
+
+def vertical_price(price_path: Path, item: QuoteItem, usd_rub_rate: float) -> tuple[int | None, str | None, str]:
+    query = _vertical_material_query(item)
+    # Тип изделия проверяется вызывающим кодом; здесь обязательна площадь.
+    if item.area_m2 is None:
+        return None, None, ""
+    full_query = normalize_key(f"{item.name} {item.fabric} {item.color}").replace("O", "О")
+    if "СТЕНОВ" in full_query and "КРОНШТЕЙН" in full_query:
+        return 0, "комплектация", "Подтверждённый прецедент: ПримерыКП / КП АО «Трансинжстрой» / стеновые кронштейны без доплаты"
+    rows = _vertical_rows(price_path)
+    override = item.raw.get("vertical_price_override")
+    selected = next((row for row in rows if override and row["row"] == override.get("row")), None)
+    selected_collection = str(override.get("collection", "")) if override else ""
+    if selected is None:
+        exact_matches: list[tuple[int, dict[str, Any], str]] = []
+        for row in rows:
+            for collection in row["collections"]:
+                if re.search(rf"(?<!\w){re.escape(collection)}(?!\w)", query):
+                    exact_matches.append((len(collection), row, collection))
+        if exact_matches:
+            _, selected, selected_collection = max(exact_matches, key=lambda value: value[0])
+    if selected:
+        row = selected["row"]
+        rate = selected["rate"]
+        category = selected["category"]
         billable_area = max(1.0, float(item.area_m2))
         price = round(billable_area * rate * usd_rub_rate)
-        source = f"{price_path.name} / Вертикальные / строка {row} / категория {category} / {rate:.4f} $/м² / курс {usd_rub_rate} руб."
+        confirmation = " / выбор пользователя" if override else ""
+        source = f"{price_path.name} / Вертикальные / строка {row} / {selected_collection} / категория {category} / {rate:.4f} $/м² / курс {usd_rub_rate} руб.{confirmation}"
         return price, category, source
     return None, None, ""
 
@@ -253,7 +313,13 @@ def price_items(items: list[QuoteItem], config: dict[str, Any], db: KnowledgeBas
         if is_vertical or (item.area_m2 and not (item.width_m and item.height_m)):
             price, category, provenance = vertical_price(price_path, item, float(config["usd_rub_rate"]))
             if price is None:
-                item.note = "Для вертикальных жалюзи нет проверенного правила цены за м²"
+                suggestions = vertical_price_suggestions(price_path, item)
+                if suggestions:
+                    item.raw["vertical_pricing_query"] = _vertical_material_query(item)
+                    item.raw["pricing_suggestions"] = suggestions
+                    item.note = "Точного названия коллекции в прайсе нет; найдены только похожие варианты"
+                else:
+                    item.note = "Для вертикальных жалюзи нет проверенного правила цены за м²"
                 unresolved.append(item)
                 continue
             item.price_rub = price

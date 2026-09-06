@@ -13,7 +13,7 @@ from source.core.config import ROOT, load_agent_config, load_llm_config
 from source.core.models import QuoteItem
 from source.core.naming import job_folder_name, quote_filename, slug
 from source.memory.knowledge import KnowledgeBase, initialize_knowledge
-from source.tools.pricing import local_price_file, price_items, vertical_price
+from source.tools.pricing import local_price_file, price_items, vertical_price, vertical_price_suggestions
 from source.tools.reviewer import _contains_temporary_service
 from source.tools.tz_parser import extract_records, parse_tz
 from source.ui.dialogue import apply_supported_choice, build_options
@@ -139,6 +139,45 @@ def test_vertical_price_matches_material_inside_catalog_cell() -> None:
     _, plain_category, _ = vertical_price(source, plain_blackout, 81)
     assert malta_category == "E"
     assert plain_category == "4"
+
+
+def test_partial_vertical_match_requires_user_choice() -> None:
+    source = local_price_file()
+    exact_item = QuoteItem(
+        "docx:1:1",
+        "Жалюзи Тканевые ЛАЙН II, бежевый",
+        1,
+        area_m2=2.0,
+        fabric="Жалюзи Тканевые",
+        color="ЛАЙН II, бежевый",
+    )
+    exact_price, exact_category, _ = vertical_price(source, exact_item, 81)
+    assert exact_price is not None and exact_category == "E"
+
+    item = QuoteItem(
+        "docx:1:2",
+        "Жалюзи Тканевые Лайн 32, т.бежевый NEW",
+        2,
+        area_m2=9.25,
+        fabric="Жалюзи Тканевые",
+        color="Лайн 32, т.бежевый NEW",
+    )
+    price, category, _ = vertical_price(source, item, 81)
+    assert price is None and category is None
+
+    suggestions = vertical_price_suggestions(source, item)
+    assert suggestions[0]["collection"] == "ЛАЙН II"
+    item.raw["vertical_pricing_query"] = "ЛАЙН 32, Т.БЕЖЕВЫЙ NEW"
+    item.raw["pricing_suggestions"] = suggestions
+    options = build_options([item])
+    assert options[0]["label"].startswith("Рассчитать как «ЛАЙН II»")
+    assert options[-1]["key"] == "defer"
+
+    assert apply_supported_choice([item], options[0]["key"]) == 1
+    price, category, source_text = vertical_price(source, item, 81)
+    assert price == 13870
+    assert category == "E"
+    assert "выбор пользователя" in source_text
 
 
 def test_procurement_docx_requires_only_angular_rule() -> None:
@@ -361,6 +400,7 @@ if __name__ == "__main__":
     test_pricing_without_delivery_or_installation()
     test_vertical_blinds_area_pricing()
     test_vertical_price_matches_material_inside_catalog_cell()
+    test_partial_vertical_match_requires_user_choice()
     test_procurement_docx_requires_only_angular_rule()
     test_manual_calculation_report_identifies_skipped_item()
     test_bnt_electrics_pdf_pricing()
