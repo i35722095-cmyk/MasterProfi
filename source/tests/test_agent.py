@@ -225,6 +225,53 @@ def test_llm_provider_is_selected_by_config() -> None:
         raise AssertionError("Неизвестный провайдер должен быть отклонён")
 
 
+def test_cloud_providers_are_selected_by_config_and_require_api_key() -> None:
+    import os
+
+    from source.agent.claude_provider import ClaudeProvider
+    from source.agent.openai_compatible_provider import OpenAICompatibleProvider
+
+    env_var = "MASTERPROFI_TEST_MISSING_KEY"
+    os.environ.pop(env_var, None)
+    for provider_name, expected_class in (("claude", ClaudeProvider), ("deepseek", OpenAICompatibleProvider), ("qwen", OpenAICompatibleProvider)):
+        try:
+            create_llm_provider({"provider": provider_name, "model": "test", "api_key_env": env_var}, logger=silent)
+        except ValueError as error:
+            assert "API-ключ" in str(error)
+        else:
+            raise AssertionError(f"{provider_name} без ключа API должен быть отклонён")
+
+    os.environ[env_var] = "test-key"
+    try:
+        claude = create_llm_provider(
+            {"provider": "claude", "model": "test", "api_key_env": env_var, "base_url": "http://127.0.0.1:1"},
+            logger=silent,
+        )
+        assert isinstance(claude, ClaudeProvider)
+        deepseek = create_llm_provider(
+            {"provider": "deepseek", "model": "test", "api_key_env": env_var, "base_url": "http://127.0.0.1:1"},
+            logger=silent,
+        )
+        assert isinstance(deepseek, OpenAICompatibleProvider)
+    finally:
+        os.environ.pop(env_var, None)
+
+
+def test_llm_config_defaults_to_ollama_and_lists_all_providers() -> None:
+    from source.core.config import list_llm_providers
+
+    default_config = load_llm_config()
+    assert default_config["provider"] == "ollama"
+    assert "url" in default_config
+
+    providers = dict(list_llm_providers())
+    assert set(providers) == {"ollama", "claude", "deepseek", "qwen"}
+
+    claude_config = load_llm_config("claude")
+    assert claude_config["provider"] == "claude"
+    assert "base_url" in claude_config
+
+
 def test_report_folder_is_recreated_if_removed_during_calculation() -> None:
     with TemporaryDirectory() as temporary:
         output_dir = Path(temporary) / "result"
@@ -281,6 +328,8 @@ if __name__ == "__main__":
     test_human_readable_result_names()
     test_router_accepts_only_supported_tz_formats()
     test_llm_provider_is_selected_by_config()
+    test_cloud_providers_are_selected_by_config_and_require_api_key()
+    test_llm_config_defaults_to_ollama_and_lists_all_providers()
     test_report_folder_is_recreated_if_removed_during_calculation()
     test_large_review_report_groups_repeated_unresolved_items()
     test_user_can_choose_safe_angular_amg_rule()

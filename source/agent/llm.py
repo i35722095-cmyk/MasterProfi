@@ -26,4 +26,12 @@ def create_llm_provider(settings: dict[str, Any], logger: Callable[[str], None] 
         from .ollama_provider import OllamaProvider
 
         return OllamaProvider(settings, logger=logger)
+    if provider == "claude":
+        from .claude_provider import ClaudeProvider
+
+        return ClaudeProvider(settings, logger=logger)
+    if provider in {"deepseek", "qwen"}:
+        from .openai_compatible_provider import OpenAICompatibleProvider
+
+        return OpenAICompatibleProvider(settings, logger=logger)
     raise ValueError(f"Неподдерживаемый LLM-провайдер: {provider}")

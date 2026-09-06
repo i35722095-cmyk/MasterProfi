@@ -1,11 +1,16 @@
-# Провайдер LLM. Сейчас доступна локальная Ollama; новые адаптеры добавляются без изменения расчётного кода.
+# Какой провайдер использовать по умолчанию при запуске без интерактивного выбора.
+# Доступные значения: ollama (локально), claude, deepseek, qwen (через облачный API).
 provider = "ollama"
 
+# ---------------------------------------------------------------------------
+# Локальная модель через Ollama. Ничего не отправляется в интернет.
+# ---------------------------------------------------------------------------
+[ollama]
 # Имя модели, установленной в локальной Ollama.
 model = "qwen3.5:9b"
 
 # Имя, показываемое в журнале работы агента.
-display_name = "Qwen"
+display_name = "Qwen (локально)"
 
 # Адрес локального сервера Ollama.
 url = "http://127.0.0.1:11434/api/chat"
@@ -19,3 +24,46 @@ num_predict = 900
 batch_size = 6
 temperature = 0.0
 think = false
+
+# ---------------------------------------------------------------------------
+# Claude (Anthropic). Требует переменную окружения с ключом API.
+# Ключ никогда не хранится в этом файле: export ANTHROPIC_API_KEY=...
+# ---------------------------------------------------------------------------
+[claude]
+model = "claude-sonnet-4-5-20250929"
+display_name = "Claude"
+base_url = "https://api.anthropic.com/v1/messages"
+anthropic_version = "2023-06-01"
+api_key_env = "ANTHROPIC_API_KEY"
+timeout_seconds = 60
+max_tokens = 900
+batch_size = 6
+temperature = 0.0
+
+# ---------------------------------------------------------------------------
+# DeepSeek. Требует переменную окружения с ключом API.
+# export DEEPSEEK_API_KEY=...
+# ---------------------------------------------------------------------------
+[deepseek]
+model = "deepseek-chat"
+display_name = "DeepSeek"
+base_url = "https://api.deepseek.com/chat/completions"
+api_key_env = "DEEPSEEK_API_KEY"
+timeout_seconds = 60
+max_tokens = 900
+batch_size = 6
+temperature = 0.0
+
+# ---------------------------------------------------------------------------
+# Qwen через облачный API Alibaba Cloud (DashScope, OpenAI-совместимый режим).
+# export DASHSCOPE_API_KEY=...
+# ---------------------------------------------------------------------------
+[qwen]
+model = "qwen-plus"
+display_name = "Qwen (API)"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+api_key_env = "DASHSCOPE_API_KEY"
+timeout_seconds = 60
+max_tokens = 900
+batch_size = 6
+temperature = 0.0
