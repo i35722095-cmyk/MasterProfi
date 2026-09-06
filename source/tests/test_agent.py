@@ -210,6 +210,12 @@ def test_customer_replacement_is_highlighted_and_reviewed_in_pdf() -> None:
         assert review.ok, review.errors
         assert review.checks["replacement_items"] == 1
         assert any("замены" in warning for warning in review.warnings)
+        import pdfplumber
+        with pdfplumber.open(pdf) as document:
+            text = " ".join(page.extract_text() or "" for page in document.pages)
+        assert "АЛЬТЕРНАТИВА МАТЕРИАЛА" in text
+        assert "Лайн 32, т.бежевый NEW" in text
+        assert "ЛАЙН II" in text
 
 
 def test_procurement_docx_requires_only_angular_rule() -> None:

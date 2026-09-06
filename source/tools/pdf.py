@@ -69,7 +69,7 @@ def _description(item: QuoteItem) -> str:
         original = escape(str(replacement.get("original") or "исходный материал"))
         selected = escape(str(replacement.get("replacement") or "выбранная альтернатива"))
         text += (
-            '<br/><font color="#9C5700"><b>ЗАМЕНА МАТЕРИАЛА:</b> '
+            '<br/><font color="#9C5700"><b>АЛЬТЕРНАТИВА МАТЕРИАЛА:</b> '
             f'«{original}» → «{selected}»</font>'
         )
     return text
