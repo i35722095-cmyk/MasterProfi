@@ -59,6 +59,9 @@ def _description(item: QuoteItem) -> str:
     else:
         hardware_color = str(item.raw.get("hardware_color") or "белая")
         lines = [f"Рулонные шторы {item.system}, комплектация: {hardware_color}"]
+        cassette_size = item.raw.get("cassette_size_mm")
+        if cassette_size:
+            lines.append(f"Короб: кассета AMG {int(cassette_size)} мм")
         if item.raw.get("default_fabric_category"):
             category = escape(str(item.category or item.raw["default_fabric_category"]))
             opacity = escape(item.opacity.lower() or "материал без указанной коллекции")

@@ -251,6 +251,7 @@ def _text_position_records(lines: list[str], source_kind: str) -> list[dict[str,
             ))
         width, width_range = _text_measurement(block, "ширин")
         height, height_range = _text_measurement(block, "высот")
+        shaft_diameter, shaft_range = _text_measurement(block, r"диаметр\s+(?:вала|трубы)")
         parsed_width, parsed_height, area = parse_dimensions(block)
         width = width or parsed_width
         height = height or parsed_height
@@ -273,6 +274,15 @@ def _text_position_records(lines: list[str], source_kind: str) -> list[dict[str,
             "structured": bool(heading and quantity and width and height and system and default_category),
             "text_source": True,
         }
+        if "кассет" in lower:
+            shaft_diameter_mm = round(float(shaft_diameter or 0) * 1000)
+            raw.update({
+                "cassette_required": True,
+                "cassette_size_mm": 32 if shaft_diameter_mm and shaft_diameter_mm <= 32 else 45,
+                "requested_shaft_diameter_mm": shaft_diameter_mm or None,
+            })
+            if shaft_range:
+                raw["shaft_diameter_range"] = shaft_range
         average_dimensions = {
             key: value
             for key, value in (("width", width_range), ("height", height_range))

@@ -100,10 +100,12 @@ def test_text_docx_and_txt_use_average_dimensions_and_default_fabric_categories(
     lines = [
         "Прошу прислать КП на следующие позиции:",
         "Позиция 1. Штора рулонная, кассетного типа — 96 штук.",
+        "диаметр вала — 38 мм;",
         "светозащитная категория ткани — непрозрачная;",
         "ширина шторы — от 238 до 280 см;",
         "высота шторы — от 180 до 230 см;",
         "Позиция 2. Штора рулонная, кассетного типа — 10 штук.",
+        "диаметр вала — от 40 до 48 мм;",
         "светозащитная категория ткани — затеняющая;",
         "ширина шторы — от 238 до 280 см;",
         "высота шторы — от 170 до 220 см;",
@@ -128,6 +130,11 @@ def test_text_docx_and_txt_use_average_dimensions_and_default_fabric_categories(
             assert records[1]["height_m"] == 1.95
             assert records[0]["default_fabric_category"] == "1"
             assert records[1]["default_fabric_category"] == "E"
+            assert records[0]["cassette_required"] is True
+            assert records[0]["cassette_size_mm"] == 45
+            assert records[0]["requested_shaft_diameter_mm"] == 38
+            assert records[1]["cassette_size_mm"] == 45
+            assert records[1]["requested_shaft_diameter_mm"] == 44
             assert records[0]["dimension_average"]["width"]["minimum_m"] == 2.38
             assert records[0]["dimension_average"]["width"]["maximum_m"] == 2.8
 
@@ -157,7 +164,9 @@ def test_text_docx_and_txt_use_average_dimensions_and_default_fabric_categories(
             assert not unresolved
             assert not invalid
             assert [item.category for item in priced] == ["1", "E"]
+            assert [item.price_rub for item in priced] == [29406, 27912]
             assert all("Правило по умолчанию" in item.price_source for item in priced)
+            assert all("AMG!H39 кассета 45 мм" in item.price_source for item in priced)
 
             pdf = create_quote_pdf(docx_path, priced, load_agent_config(), directory / "quote")
             with pdfplumber.open(pdf) as proposal:
@@ -169,6 +178,7 @@ def test_text_docx_and_txt_use_average_dimensions_and_default_fabric_categories(
             assert "непрозрачная, категория 1" in text
             assert "затемняющая, категория E" in text
             assert text.count("материал не") == 2
+            assert text.count("Короб: кассета AMG 45 мм") == 2
         finally:
             db.close()
 

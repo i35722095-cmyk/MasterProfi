@@ -234,6 +234,43 @@ def _usd_option_cached(price_path_str: str, _price_version: int, sheet_name: str
     return float(match.group().replace(",", "."))
 
 
+def _usd_amounts(price_path: Path, sheet_name: str, cell: str) -> list[float]:
+    value = load_workbook(price_path, data_only=True, read_only=True)[sheet_name][cell].value
+    return [
+        float(match.replace(",", "."))
+        for match in re.findall(r"(\d+(?:[.,]\d+)?)\s*\$", normalize(value))
+    ]
+
+
+def amg_cassette_surcharge(price_path: Path, item: QuoteItem) -> tuple[float | None, str]:
+    width = float(item.width_m or 0)
+    if not width:
+        return None, ""
+    cassette_size = int(item.raw.get("cassette_size_mm") or 32)
+    if cassette_size == 32:
+        width_rate = _usd_option(price_path, "AMG", "H38")
+        total = width_rate * width
+        source = f"AMG!H38 кассета 32 мм {width_rate:.2f} $/м × {width:.2f} м"
+    elif cassette_size == 45:
+        amounts = _usd_amounts(price_path, "AMG", "H39")
+        if len(amounts) < 2:
+            return None, ""
+        width_rate, tube_surcharge = amounts[0], amounts[-1]
+        total = width_rate * width + tube_surcharge
+        source = (
+            f"AMG!H39 кассета 45 мм {width_rate:.2f} $/м × {width:.2f} м"
+            f" + труба 45 мм {tube_surcharge:.2f} $/изделие"
+        )
+    else:
+        return None, ""
+    if item.raw.get("variant") == "cassette_32_guides":
+        guide_rate = _usd_option(price_path, "AMG", "H41")
+        height = float(item.height_m or 0)
+        total += guide_rate * height
+        source += f" + AMG!H41 боковые направляющие {guide_rate:.2f} $/м × {height:.2f} м"
+    return total, source
+
+
 def bnt_price(price_path: Path, item: QuoteItem, category: str, usd_rub_rate: float) -> tuple[int | None, str]:
     variant = item.raw.get("variant")
     if variant == "bnt_m44_mono_electric":
@@ -389,11 +426,17 @@ def price_items(items: list[QuoteItem], config: dict[str, Any], db: KnowledgeBas
             item.note = "Размер вне проверенной ценовой сетки"
             unresolved.append(item)
             continue
-        if sheet_name == "AMG" and item.raw.get("variant") == "cassette_32_guides":
-            cassette = 45.66 * float(item.width_m)
-            side_guides = 56.45 * float(item.height_m)
-            base += cassette + side_guides
-            provenance += f" + кассета 32 мм {cassette:.2f} $ + боковые направляющие {side_guides:.2f} $"
+        cassette_required = item.raw.get("cassette_required") or item.raw.get("variant") == "cassette_32_guides"
+        if sheet_name == "AMG" and cassette_required:
+            if item.raw.get("variant") == "cassette_32_guides":
+                item.raw.setdefault("cassette_size_mm", 32)
+            cassette, cassette_source = amg_cassette_surcharge(price_path, item)
+            if cassette is None:
+                item.note = "В прайсе не найдена наценка на указанный короб AMG"
+                unresolved.append(item)
+                continue
+            base += cassette
+            provenance += f" + {cassette_source}"
         item.price_rub = round(base * float(config["usd_rub_rate"])) * split
         item.price_source = provenance + f" / курс {config['usd_rub_rate']} руб."
         if fabric_source:
