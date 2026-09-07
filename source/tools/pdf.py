@@ -67,13 +67,8 @@ def _description(item: QuoteItem) -> str:
         text += "<br/>" + item.note.split(";")[0]
     replacement = item.raw.get("customer_replacement")
     if replacement:
-        original = escape(str(replacement.get("original") or "исходный материал"))
         selected = escape(str(replacement.get("replacement") or "выбранная альтернатива"))
-        text += (
-            f'<br/><b>Исходный материал:</b> «{original}»'
-            f'<br/><font color="{_ALTERNATIVE_COLOR}"><b>ЗАМЕНА:</b> '
-            f'«{selected}»</font>'
-        )
+        text += f'<br/><font color="{_ALTERNATIVE_COLOR}"><b>«{selected}»</b></font>'
     return text
 
 
@@ -234,7 +229,6 @@ def create_quote_pdf(
         if item.raw.get("customer_replacement"):
             products.setStyle(TableStyle([
                 ("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#FFF2CC")),
-                ("BOX", (0, row_index), (-1, row_index), 1.1, colors.HexColor(_ALTERNATIVE_COLOR)),
             ]))
     story.extend([products, Spacer(1, 3 * mm)])
 

@@ -217,10 +217,13 @@ def test_customer_replacement_is_highlighted_and_reviewed_in_pdf() -> None:
             "ВНИМАНИЕ: В предложении есть согласованные альтернативы. "
             "Замена указана выделенным цветом."
         ) in text
-        assert "Исходный материал: «Лайн 32, т.бежевый NEW»" in text
-        assert "ЗАМЕНА: «ЛАЙН II»" in text
-        assert "Лайн 32, т.бежевый NEW" in text
-        assert "ЛАЙН II" in text
+        assert "Исходный материал:" not in text
+        assert "ЗАМЕНА:" not in text
+        original = "Лайн 32, т.бежевый NEW"
+        replacement = "ЛАЙН II"
+        assert text.count(original) == 1
+        assert text.count(replacement) == 1
+        assert text.index(original) < text.index(replacement)
 
 
 def test_procurement_docx_requires_only_angular_rule() -> None:
