@@ -166,6 +166,86 @@ def _unique_cells(row: Any) -> list[str]:
     return values
 
 
+def _bounded_measurement(value: str) -> tuple[float | None, dict[str, Any] | None]:
+    numbers = [float(number.replace(",", ".")) for number in re.findall(r"\d+(?:[.,]\d+)?", value)]
+    if len(numbers) >= 2 and any(marker in value for marker in ("<", ">", "≤", "≥", "от", "до")):
+        minimum, maximum = numbers[0], numbers[1]
+        return round((minimum + maximum) / 2, 6), {
+            "minimum_m": minimum,
+            "maximum_m": maximum,
+            "source": normalize(value),
+        }
+    if numbers:
+        return numbers[0], None
+    return None, None
+
+
+def _ktru_docx_records(table_index: int, rows: list[list[str]]) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    header = [normalize(value).lower() for value in rows[0]]
+    required_headers = {"наименование товара", "наименование характеристики", "значение характеристики"}
+    if not required_headers.issubset(set(header)):
+        return []
+    indexes = {
+        "name": header.index("наименование товара"),
+        "characteristic": header.index("наименование характеристики"),
+        "value": header.index("значение характеристики"),
+        "quantity": next((index for index, value in enumerate(header) if "кол-во" in value or "количество" in value), None),
+    }
+    groups: dict[tuple[str, int], dict[str, Any]] = {}
+    for row_index, values in enumerate(rows[1:], 2):
+        name = normalize(values[indexes["name"]]) if indexes["name"] < len(values) else ""
+        quantity_index = indexes["quantity"]
+        quantity = _quantity(values[quantity_index]) if quantity_index is not None and quantity_index < len(values) else 0
+        if not name or not quantity:
+            continue
+        key = (name, quantity)
+        group = groups.setdefault(key, {"row": row_index, "characteristics": {}, "texts": []})
+        characteristic = normalize(values[indexes["characteristic"]]) if indexes["characteristic"] < len(values) else ""
+        characteristic_value = normalize(values[indexes["value"]]) if indexes["value"] < len(values) else ""
+        if characteristic:
+            group["characteristics"][characteristic.lower()] = characteristic_value
+        group["texts"].append(" | ".join(values))
+
+    result: list[dict[str, Any]] = []
+    for (name, quantity), group in groups.items():
+        characteristics = group["characteristics"]
+        if "портьер" not in name.lower():
+            continue
+        width, width_range = _bounded_measurement(characteristics.get("ширина полотна", ""))
+        height, height_range = _bounded_measurement(characteristics.get("высота полотна", ""))
+        panel_count = max(1, _quantity(characteristics.get("количество полотен", "1")))
+        fabric_kind = normalize(characteristics.get("вид ткани", ""))
+        blackout = bool(re.search(r"black[ -]?out|бл[эе]каут|непрозрач", fabric_kind, re.I))
+        category = "1" if blackout else "E"
+        dimension_average = {
+            key: value for key, value in (("width", width_range), ("height", height_range)) if value
+        }
+        result.append({
+            "source_ref": f"docx:{table_index}:{group['row']}",
+            "name": name,
+            "quantity": quantity,
+            "width_m": width,
+            "height_m": height,
+            "area_m2": None,
+            "system": "",
+            "fabric": "Непрозрачный материал" if blackout else "Материал без указанной коллекции",
+            "opacity": "Блэкаут" if blackout else "",
+            "variant": "portieres",
+            "panel_count": panel_count,
+            "folding_coefficient": 1.5,
+            "folding_coefficient_default": True,
+            "default_fabric_category": category,
+            "default_fabric_reason": "конкретная ткань не указана в ТЗ",
+            "dimension_average": dimension_average,
+            "characteristics": characteristics,
+            "raw_text": normalize(" ".join(group["texts"])),
+            "structured": bool(width and height),
+        })
+    return result
+
+
 def _measurement_to_metres(value: str, unit: str) -> float:
     number = float(value.replace(",", "."))
     normalized_unit = unit.lower()
@@ -315,6 +395,10 @@ def _docx_records(path: Path) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for table_index, table in enumerate(document.tables, 1):
         rows = [_unique_cells(row) for row in table.rows]
+        ktru_records = _ktru_docx_records(table_index, rows)
+        if ktru_records:
+            result.extend(ktru_records)
+            continue
         header = None
         indexes: dict[str, int | None] = {}
         for row_index, values in enumerate(rows[:15]):

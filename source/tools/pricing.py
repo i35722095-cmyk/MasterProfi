@@ -43,6 +43,25 @@ def _fabric_catalog(price_path: Path, db: KnowledgeBase) -> list[dict[str, Any]]
     return result
 
 
+def _portiere_fabric_catalog(price_path: Path) -> list[dict[str, Any]]:
+    workbook = load_workbook(price_path, data_only=True, read_only=True)
+    sheet = workbook["Хар римский портьерных тканей"]
+    result: list[dict[str, Any]] = []
+    for row, values in enumerate(sheet.iter_rows(min_row=4, min_col=3, max_col=6, values_only=True), 4):
+        collection = normalize(values[0])
+        category = normalize(values[2]).upper().replace("Е", "E")
+        roll_width_cm = values[3]
+        if collection and category in {"E", "1", "2", "3", "4"} and isinstance(roll_width_cm, (int, float)):
+            result.append({
+                "collection": collection,
+                "category": category,
+                "roll_width_m": float(roll_width_cm) / 100,
+                "row": row,
+            })
+    workbook.close()
+    return result
+
+
 def _matching_fabric(catalog: list[dict[str, Any]], value: str) -> dict[str, Any] | None:
     query = normalize_key(value)
     if not query:
@@ -424,6 +443,48 @@ def accessory_price(price_path: Path, item: QuoteItem, usd_rub_rate: float) -> t
     return round(value * usd_rub_rate), f"{price_path.name} / Электрика AMIGO!{cell} / {value:.4f} $ / курс {usd_rub_rate} руб."
 
 
+def portiere_price(price_path: Path, item: QuoteItem, usd_rub_rate: float) -> tuple[int | None, str | None, str]:
+    category = normalize(item.raw.get("default_fabric_category") or "E").upper().replace("Е", "E")
+    category_columns = {"E": 5, "1": 6, "2": 7, "3": 8, "4": 9}
+    column = category_columns.get(category)
+    if column is None or item.width_m is None or item.height_m is None:
+        return None, None, ""
+    fabrics = [row for row in _portiere_fabric_catalog(price_path) if row["category"] == category]
+    suitable = [row for row in fabrics if float(row["roll_width_m"]) + 1e-9 >= float(item.height_m)]
+    suitable.sort(key=lambda row: (float(row["roll_width_m"]), normalize_key(row["collection"])))
+    if not suitable:
+        item.note = (
+            f"В категории {category} нет портьерной ткани шириной не менее высоты полотна "
+            f"{float(item.height_m):.2f} м"
+        )
+        return None, None, ""
+    selected = suitable[0]
+    workbook = load_workbook(price_path, data_only=True, read_only=True)
+    rate = workbook["Портьеры"].cell(6, column).value
+    workbook.close()
+    if not isinstance(rate, (int, float)):
+        return None, None, ""
+    panel_count = max(1, int(item.raw.get("panel_count") or 1))
+    coefficient = float(item.raw.get("folding_coefficient") or 1.5)
+    total_width = float(item.width_m) * panel_count
+    total_usd = float(rate) * total_width * coefficient
+    item.raw["fabric_width_check"] = {
+        "collection": selected["collection"],
+        "required_width_m": float(item.height_m),
+        "roll_width_m": float(selected["roll_width_m"]),
+        "row": selected["row"],
+        "sheet": "Хар римский портьерных тканей",
+    }
+    source = (
+        f"{price_path.name} / Портьеры!{chr(64 + column)}6 категория {category} {float(rate):.4f} $/п.м."
+        f" × {float(item.width_m):.2f} м × {panel_count} полотна × коэффициент складок {coefficient:g}"
+        f" / Хар римский портьерных тканей!F{selected['row']} ширина рулона "
+        f"{float(selected['roll_width_m']):.2f} м ≥ высоты {float(item.height_m):.2f} м"
+        f" / курс {usd_rub_rate} руб."
+    )
+    return round(total_usd * usd_rub_rate), category, source
+
+
 def price_items(items: list[QuoteItem], config: dict[str, Any], db: KnowledgeBase, logger=print) -> tuple[list[QuoteItem], list[QuoteItem], list[QuoteItem]]:
     price_path = local_price_file()
     catalog = _fabric_catalog(price_path, db)
@@ -446,6 +507,19 @@ def price_items(items: list[QuoteItem], config: dict[str, Any], db: KnowledgeBas
             item.price_source = accessory_source
             priced.append(item)
             logger(f"{item.source_ref}: электрика, {accessory} руб./ед.")
+            continue
+        if item.raw.get("variant") == "portieres":
+            price, category, provenance = portiere_price(price_path, item, float(config["usd_rub_rate"]))
+            if price is None or category is None:
+                if not item.note:
+                    item.note = "Не удалось применить проверенное правило расчёта портьер"
+                unresolved.append(item)
+                continue
+            item.price_rub = price
+            item.category = category
+            item.price_source = provenance
+            priced.append(item)
+            logger(f"{item.source_ref}: портьеры, категория {category}, коэффициент складок 1,5, {price} руб./ед.")
             continue
         is_vertical = "ВЕРТИКАЛ" in normalize_key(item.name)
         if is_vertical:

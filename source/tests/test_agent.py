@@ -225,6 +225,81 @@ def test_too_narrow_roll_requires_confirmed_fabric_replacement() -> None:
         db.close()
 
 
+def test_ktru_portieres_are_grouped_and_priced_with_defaults() -> None:
+    from docx import Document
+    import pdfplumber
+
+    class NoLLM:
+        def __init__(self) -> None:
+            self.calls: list[list[dict]] = []
+
+        def extract_items(self, records, _context):
+            self.calls.append(records)
+            return []
+
+    with TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        path = directory / "КТРУ портьеры.docx"
+        document = Document()
+        table = document.add_table(rows=1, cols=8)
+        headers = [
+            "Код КТРУ/ОКПД", "Наименование товара", "Наименование характеристики",
+            "Тип характеристики", "Значение характеристики", "Единица измерения характеристики",
+            "Кол-во", "Ед. изм.",
+        ]
+        for cell, value in zip(table.rows[0].cells, headers):
+            cell.text = value
+        characteristics = [
+            ("Вид ткани", "Блэкаут", "-"),
+            ("Высота полотна", "≥2.0 и <2.5", "Метр"),
+            ("Количество полотен", "2.0", "Штука"),
+            ("Тип крепления", "Шторная лента", "-"),
+            ("Ширина полотна", "≥1.5 и <2.0", "Метр"),
+        ]
+        for characteristic, value, unit in characteristics:
+            cells = table.add_row().cells
+            values = ["КТРУ: 13.92.15.120-00000001", "Портьеры", characteristic, "", value, unit, "132", "Штука"]
+            for cell, cell_value in zip(cells, values):
+                cell.text = cell_value
+        document.save(path)
+
+        records = extract_records(path)
+        assert len(records) == 1
+        record = records[0]
+        assert record["width_m"] == 1.75
+        assert record["height_m"] == 2.25
+        assert record["quantity"] == 132
+        assert record["panel_count"] == 2
+        assert record["default_fabric_category"] == "1"
+        assert record["folding_coefficient"] == 1.5
+
+        db = KnowledgeBase()
+        try:
+            initialize_knowledge(db)
+            llm = NoLLM()
+            items = parse_tz(path, llm, db)
+            assert llm.calls == [[]]
+            priced, unresolved, invalid = price_items(items, load_agent_config(), db, logger=silent)
+            assert len(priced) == 1 and not unresolved and not invalid
+            assert priced[0].category == "1"
+            assert priced[0].price_rub == 21121
+            assert priced[0].raw["fabric_width_check"]["roll_width_m"] >= 2.25
+            assert "коэффициент складок 1.5" in priced[0].price_source
+
+            pdf = create_quote_pdf(path, priced, load_agent_config(), directory / "quote")
+            review = review_quote(pdf, priced, [], [], load_agent_config())
+            assert review.ok, review.errors
+            with pdfplumber.open(pdf) as proposal:
+                text = " ".join(" ".join(page.extract_text() or "" for page in proposal.pages).split())
+            assert "Портьеры, 2 полотна" in text
+            assert "категория 1" in text
+            assert "Коэффициент складок: 1,5 (принят по умолчанию)" in text
+            assert "1750×2250" in text
+            assert "взято среднее" in text and "диапазона" in text
+        finally:
+            db.close()
+
+
 def test_public_tools_package_has_no_circular_import() -> None:
     from source.tools import extract_records as public_extract_records
 

@@ -48,6 +48,17 @@ def _money(value: int | float) -> str:
 
 
 def _description(item: QuoteItem) -> str:
+    if item.raw.get("variant") == "portieres":
+        panel_count = int(item.raw.get("panel_count") or 1)
+        coefficient = float(item.raw.get("folding_coefficient") or 1.5)
+        category = escape(str(item.category or item.raw.get("default_fabric_category") or "E"))
+        opacity = escape(item.opacity.lower() or "ткань без указанной коллекции")
+        return (
+            f"Портьеры, {panel_count} полотна<br/>"
+            f"Ткань: {opacity}, категория {category} (конкретная ткань не указана в ТЗ)<br/>"
+            f"Коэффициент складок: {str(coefficient).replace('.', ',')} (принят по умолчанию)<br/>"
+            "Раскрой по ширине изделия"
+        )
     if item.raw.get("variant") in {"bnt_m44_mono_electric", "bnt_l65_electric"}:
         return (
             f"Рулонная штора {item.system} с монтажным профилем<br/>"
