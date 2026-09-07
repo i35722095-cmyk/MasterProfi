@@ -167,6 +167,9 @@ def test_text_docx_and_txt_use_average_dimensions_and_default_fabric_categories(
             assert [item.price_rub for item in priced] == [29406, 27912]
             assert all("Правило по умолчанию" in item.price_source for item in priced)
             assert all("AMG!H39 кассета 45 мм" in item.price_source for item in priced)
+            assert all("Рулонные ткани!F" in item.price_source for item in priced)
+            assert priced[0].raw["fabric_width_check"]["roll_width_m"] >= 2.59
+            assert priced[1].raw["fabric_width_check"]["roll_width_m"] >= 2.59
 
             pdf = create_quote_pdf(docx_path, priced, load_agent_config(), directory / "quote")
             with pdfplumber.open(pdf) as proposal:
@@ -181,6 +184,45 @@ def test_text_docx_and_txt_use_average_dimensions_and_default_fabric_categories(
             assert text.count("Короб: кассета AMG 45 мм") == 2
         finally:
             db.close()
+
+
+def test_too_narrow_roll_requires_confirmed_fabric_replacement() -> None:
+    db = KnowledgeBase()
+    try:
+        initialize_knowledge(db)
+        item = QuoteItem(
+            "test:1",
+            "Рулонная штора AMG",
+            1,
+            width_m=2.2,
+            height_m=1.5,
+            system="AMG",
+            fabric="АЛЬФА 200 см",
+        )
+        priced, unresolved, invalid = price_items([item], load_agent_config(), db, logger=silent)
+        assert not priced and not invalid and unresolved == [item]
+        assert "2.00 м меньше ширины изделия 2.20 м" in item.note
+        assert item.raw["fabric_width_suggestions"]
+        assert all(value["category"] == "E" for value in item.raw["fabric_width_suggestions"])
+        assert all(value["roll_width_m"] >= 2.2 for value in item.raw["fabric_width_suggestions"])
+
+        options = build_options(unresolved)
+        assert options[0]["key"].startswith("fabric_width:")
+        assert "ширина ткани" in options[0]["label"]
+        assert apply_supported_choice(unresolved, options[0]["key"]) == 1
+
+        priced, unresolved, invalid = price_items([item], load_agent_config(), db, logger=silent)
+        assert len(priced) == 1 and not unresolved and not invalid
+        replacement = item.raw["fabric_width_override"]["collection"]
+        assert item.raw["customer_replacement"] == {
+            "original": "АЛЬФА 200 см",
+            "replacement": replacement,
+        }
+        assert item.fabric == "АЛЬФА 200 см"
+        assert item.raw["fabric_width_check"]["roll_width_m"] >= 2.2
+        assert "выбор пользователя по ширине" in item.price_source
+    finally:
+        db.close()
 
 
 def test_public_tools_package_has_no_circular_import() -> None:

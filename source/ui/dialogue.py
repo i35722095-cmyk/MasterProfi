@@ -36,6 +36,28 @@ def build_options(unresolved: list[QuoteItem]) -> list[dict[str, str]]:
                 "label": "Не рассчитывать: нужно отдельное правило для угловой шторы.",
             },
         ]
+    width_originals = {str(item.raw.get("fabric_width_original", "")) for item in unresolved}
+    if len(width_originals) == 1 and "" not in width_originals and all(item.raw.get("fabric_width_suggestions") for item in unresolved):
+        shared_rows = set.intersection(*[
+            {int(suggestion["row"]) for suggestion in item.raw["fabric_width_suggestions"]}
+            for item in unresolved
+        ])
+        suggestions = [
+            suggestion for suggestion in unresolved[0].raw["fabric_width_suggestions"]
+            if int(suggestion["row"]) in shared_rows
+        ]
+        options = [
+            {
+                "key": f"fabric_width:{suggestion['row']}",
+                "label": (
+                    f"Заменить на «{suggestion['collection']}»: категория {suggestion['category']}, "
+                    f"ширина ткани {float(suggestion['roll_width_m']):.2f} м."
+                ),
+            }
+            for suggestion in suggestions[:3]
+        ]
+        options.append({"key": "defer", "label": "Не рассчитывать: отправить позиции на ручной расчёт."})
+        return options
     queries = {str(item.raw.get("vertical_pricing_query", "")) for item in unresolved}
     if len(queries) == 1 and "" not in queries and all(item.raw.get("pricing_suggestions") for item in unresolved):
         shared_rows = set.intersection(*[
@@ -72,7 +94,14 @@ def ask_user(
         return None
 
     options = build_options(unresolved)
-    if options[0]["key"].startswith("vertical_price:"):
+    if options[0]["key"].startswith("fabric_width:"):
+        original = str(unresolved[0].raw.get("fabric_width_original", ""))
+        required = float(unresolved[0].raw.get("fabric_width_required_m", 0))
+        fallback = (
+            f"Ширины ткани «{original}» недостаточно для изделия {required:.2f} м. "
+            "Какую подходящую ткань применить?"
+        )
+    elif options[0]["key"].startswith("vertical_price:"):
         query = str(unresolved[0].raw.get("vertical_pricing_query", ""))
         fallback = (
             f"Точного совпадения для «{query}» в локальном прайсе нет. "
@@ -101,6 +130,23 @@ def ask_user(
 def apply_supported_choice(unresolved: list[QuoteItem], choice_key: str) -> int:
     """Apply only a predetermined, auditable rule explicitly selected by the user."""
     resolved = 0
+    if choice_key.startswith("fabric_width:"):
+        row = int(choice_key.split(":", 1)[1])
+        for item in unresolved:
+            suggestion = next(
+                (value for value in item.raw.get("fabric_width_suggestions", []) if int(value["row"]) == row),
+                None,
+            )
+            if suggestion:
+                original = str(item.raw.get("fabric_width_original") or item.fabric)
+                item.raw["fabric_width_override"] = {"row": row, "collection": suggestion["collection"]}
+                item.raw["customer_replacement"] = {
+                    "original": original,
+                    "replacement": suggestion["collection"],
+                }
+                item.note = f"По подтверждению пользователя: ткань заменена на «{suggestion['collection']}» по ширине"
+                resolved += 1
+        return resolved
     if choice_key.startswith("vertical_price:"):
         row = int(choice_key.split(":", 1)[1])
         for item in unresolved:
