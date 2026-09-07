@@ -186,7 +186,7 @@ def test_partial_vertical_match_requires_user_choice() -> None:
     assert "выбор пользователя" in source_text
 
 
-def test_customer_replacement_is_highlighted_and_reviewed_in_pdf() -> None:
+def test_customer_replacement_is_shown_and_reviewed_in_pdf() -> None:
     item = QuoteItem(
         "docx:1:2",
         "Жалюзи Тканевые Лайн 32, т.бежевый NEW",
@@ -447,7 +447,7 @@ if __name__ == "__main__":
     test_vertical_blinds_area_pricing()
     test_vertical_price_matches_material_inside_catalog_cell()
     test_partial_vertical_match_requires_user_choice()
-    test_customer_replacement_is_highlighted_and_reviewed_in_pdf()
+    test_customer_replacement_is_shown_and_reviewed_in_pdf()
     test_procurement_docx_requires_only_angular_rule()
     test_manual_calculation_report_identifies_skipped_item()
     test_bnt_electrics_pdf_pricing()

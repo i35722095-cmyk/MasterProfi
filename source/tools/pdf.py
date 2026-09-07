@@ -225,11 +225,6 @@ def create_quote_pdf(
         ("TOPPADDING", (0, 0), (-1, -1), 1.5),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
     ]))
-    for row_index, item in enumerate(items, 1):
-        if item.raw.get("customer_replacement"):
-            products.setStyle(TableStyle([
-                ("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#FFF2CC")),
-            ]))
     story.extend([products, Spacer(1, 3 * mm)])
 
     total = sum(item.line_total for item in items)
