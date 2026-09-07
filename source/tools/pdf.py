@@ -26,6 +26,7 @@ _FONT_CANDIDATES: dict[str, tuple[str, str]] = {
     "darwin": ("/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
     "win32": (r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\arialbd.ttf"),
 }
+_ALTERNATIVE_COLOR = "#C65911"
 
 
 def _register_fonts() -> None:
@@ -69,8 +70,9 @@ def _description(item: QuoteItem) -> str:
         original = escape(str(replacement.get("original") or "исходный материал"))
         selected = escape(str(replacement.get("replacement") or "выбранная альтернатива"))
         text += (
-            '<br/><font color="#9C5700"><b>АЛЬТЕРНАТИВА МАТЕРИАЛА:</b> '
-            f'«{original}» → «{selected}»</font>'
+            f'<br/><b>Исходный материал:</b> «{original}»'
+            f'<br/><font color="{_ALTERNATIVE_COLOR}"><b>ЗАМЕНА:</b> '
+            f'«{selected}»</font>'
         )
     return text
 
@@ -140,6 +142,12 @@ def create_quote_pdf(
         borderPadding=6,
         spaceAfter=4 * mm,
     )
+    alternative_warning = ParagraphStyle(
+        "mp-alternative-warning",
+        parent=warning,
+        textColor=colors.HexColor(_ALTERNATIVE_COLOR),
+        borderColor=colors.HexColor(_ALTERNATIVE_COLOR),
+    )
 
     metadata = next((item.raw for item in items if item.raw.get("client") or item.raw.get("address")), {})
     client = str(metadata.get("client") or "клиент не указан в ТЗ")
@@ -185,9 +193,9 @@ def create_quote_pdf(
     replacement_count = sum(bool(item.raw.get("customer_replacement")) for item in items)
     if replacement_count:
         story.append(Paragraph(
-            "ВНИМАНИЕ: в предложении есть согласованные альтернативы. "
-            "Замены явно указаны в выделенных строках таблицы.",
-            warning,
+            "ВНИМАНИЕ: В предложении есть согласованные альтернативы. "
+            "Замена указана выделенным цветом.",
+            alternative_warning,
         ))
 
     table_data: list[list[Any]] = [[
@@ -226,7 +234,7 @@ def create_quote_pdf(
         if item.raw.get("customer_replacement"):
             products.setStyle(TableStyle([
                 ("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#FFF2CC")),
-                ("BOX", (0, row_index), (-1, row_index), 1.1, colors.HexColor("#C65911")),
+                ("BOX", (0, row_index), (-1, row_index), 1.1, colors.HexColor(_ALTERNATIVE_COLOR)),
             ]))
     story.extend([products, Spacer(1, 3 * mm)])
 

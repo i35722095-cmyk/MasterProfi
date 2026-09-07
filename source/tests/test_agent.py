@@ -213,7 +213,12 @@ def test_customer_replacement_is_highlighted_and_reviewed_in_pdf() -> None:
         import pdfplumber
         with pdfplumber.open(pdf) as document:
             text = " ".join(page.extract_text() or "" for page in document.pages)
-        assert "АЛЬТЕРНАТИВА МАТЕРИАЛА" in text
+        assert (
+            "ВНИМАНИЕ: В предложении есть согласованные альтернативы. "
+            "Замена указана выделенным цветом."
+        ) in text
+        assert "Исходный материал: «Лайн 32, т.бежевый NEW»" in text
+        assert "ЗАМЕНА: «ЛАЙН II»" in text
         assert "Лайн 32, т.бежевый NEW" in text
         assert "ЛАЙН II" in text
 

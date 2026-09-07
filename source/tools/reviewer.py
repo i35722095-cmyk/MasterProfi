@@ -70,10 +70,17 @@ def review_quote(
         errors.append("В PDF отсутствует итоговая строка")
     if manual_items and "ручн" not in text:
         errors.append("В PDF отсутствует предупреждение о ручном расчёте")
-    if replacement_items and "альтернатива материала" not in text:
-        errors.append("В PDF отсутствует предупреждение об альтернативе материала")
+    alternative_warning = (
+        "внимание: в предложении есть согласованные альтернативы. "
+        "замена указана выделенным цветом."
+    )
+    if replacement_items and alternative_warning not in text:
+        errors.append("В PDF отсутствует предупреждение о согласованных альтернативах")
     for item in replacement_items:
+        original = str(item.raw["customer_replacement"].get("original", "")).lower()
         replacement = str(item.raw["customer_replacement"].get("replacement", "")).lower()
+        if original and original not in text:
+            errors.append(f"{item.source_ref}: исходный материал не указан в PDF")
         if replacement and replacement not in text:
             errors.append(f"{item.source_ref}: выбранная альтернатива не указана в PDF")
     digits = re.sub(r"\D", "", text)
