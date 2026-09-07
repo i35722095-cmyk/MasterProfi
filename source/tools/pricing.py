@@ -35,6 +35,9 @@ def _fabric_catalog(price_path: Path, db: KnowledgeBase) -> list[dict[str, str]]
 
 
 def _category(item: QuoteItem, catalog: list[dict[str, str]], db: KnowledgeBase) -> tuple[str | None, str | None, str]:
+    default_category = normalize(item.raw.get("default_fabric_category")).upper().replace("Е", "E")
+    if default_category in {"E", "1"}:
+        return default_category, None, f"Правило по умолчанию: {item.opacity.lower()}, категория {default_category}"
     query = normalize_key(item.fabric)
     candidates = [row for row in catalog if normalize_key(row["collection"]) in query or query in normalize_key(row["collection"])] if query else []
     if len(candidates) == 1:
@@ -393,6 +396,8 @@ def price_items(items: list[QuoteItem], config: dict[str, Any], db: KnowledgeBas
             provenance += f" + кассета 32 мм {cassette:.2f} $ + боковые направляющие {side_guides:.2f} $"
         item.price_rub = round(base * float(config["usd_rub_rate"])) * split
         item.price_source = provenance + f" / курс {config['usd_rub_rate']} руб."
+        if fabric_source:
+            item.price_source += f" / {fabric_source}"
         priced.append(item)
         logger(f"{item.source_ref}: {item.system}, категория {category}, {item.price_rub} руб./ед.")
     return priced, unresolved, invalid

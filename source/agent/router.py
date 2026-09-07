@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-SUPPORTED_TZ_SUFFIXES = {".xlsx", ".docx", ".pdf"}
+SUPPORTED_TZ_SUFFIXES = {".xlsx", ".docx", ".pdf", ".txt"}
 
 
 def select_skill(path: Path) -> str:

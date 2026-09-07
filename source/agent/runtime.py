@@ -83,6 +83,13 @@ def requires_review_text(source: Path, priced: list[Any], unresolved: list[Any],
         f"Исключено без размеров: {len(invalid)}.",
         "",
     ]
+    if not priced and not unresolved and not invalid:
+        lines.extend([
+            "ПРИЧИНА",
+            "В документе не удалось распознать ни одной позиции для расчёта.",
+            "Проверьте, что позиции имеют наименование, количество и размеры.",
+            "",
+        ])
     if len(unresolved) > 12:
         lines.append("ГРУППЫ ПОЗИЦИЙ, ТРЕБУЮЩИЕ РЕШЕНИЯ")
         groups: dict[tuple[str, str], list[Any]] = defaultdict(list)
@@ -224,16 +231,25 @@ def process_file(path: Path, agent_config: dict[str, Any], llm_config: dict[str,
                     log(f"Пропущено позиций для ручного расчёта: {len(manual_items)}. Формирую КП по остальным позициям.")
 
         if unresolved or not priced:
+            no_recognized_items = not items
+            reason = (
+                "В документе не найдено позиций для расчёта"
+                if no_recognized_items
+                else "Есть позиции без проверенного ценового правила"
+            )
             report = {
                 "status": "requires_review",
                 "source": path.name,
-                "reason": "Есть позиции без проверенного ценового правила",
+                "reason": reason,
                 "unresolved": [asdict(item) for item in unresolved],
                 "invalid": [asdict(item) for item in invalid],
             }
             text_path, _ = _write_review_reports(context, report, requires_review_text(path, priced, unresolved, invalid, dialogue))
             context.save("result.json", report)
-            log("КП не создано: требуется проверенное ценовое правило. Исходное ТЗ сохранено.")
+            if no_recognized_items:
+                log("КП не создано: в документе не распознано позиций для расчёта. Исходное ТЗ сохранено.")
+            else:
+                log("КП не создано: требуется проверенное ценовое правило. Исходное ТЗ сохранено.")
             log(f"Понятный отчёт для менеджера: {text_path.relative_to(OUTPUT_DIR.parent)}")
             return False
         output = create_quote_pdf(path, priced, agent_config, context.output_dir, manual_items=manual_items)

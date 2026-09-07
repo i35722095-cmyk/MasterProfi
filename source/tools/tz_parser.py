@@ -166,6 +166,139 @@ def _unique_cells(row: Any) -> list[str]:
     return values
 
 
+def _measurement_to_metres(value: str, unit: str) -> float:
+    number = float(value.replace(",", "."))
+    normalized_unit = unit.lower()
+    if normalized_unit == "мм":
+        return number / 1000
+    if normalized_unit == "см":
+        return number / 100
+    return number
+
+
+def _text_measurement(text: str, marker: str) -> tuple[float | None, dict[str, Any] | None]:
+    range_match = re.search(
+        rf"{marker}\w*[^;\n]{{0,80}}?\bот\s*(\d+(?:[.,]\d+)?)\s*"
+        rf"(?:до|[-–—])\s*(\d+(?:[.,]\d+)?)\s*(мм|см|м)\b",
+        text,
+        re.I,
+    )
+    if range_match:
+        minimum_raw, maximum_raw, unit = range_match.groups()
+        minimum = _measurement_to_metres(minimum_raw, unit)
+        maximum = _measurement_to_metres(maximum_raw, unit)
+        return round((minimum + maximum) / 2, 6), {
+            "minimum_m": minimum,
+            "maximum_m": maximum,
+            "source": normalize(range_match.group(0)),
+        }
+    exact_match = re.search(
+        rf"{marker}\w*[^;\n]{{0,80}}?\b(\d+(?:[.,]\d+)?)\s*(мм|см|м)\b",
+        text,
+        re.I,
+    )
+    if exact_match:
+        return _measurement_to_metres(exact_match.group(1), exact_match.group(2)), None
+    return None, None
+
+
+def _default_fabric(text: str) -> tuple[str, str, str] | None:
+    lower = text.lower()
+    if re.search(r"\bне\s*прозрач\w*|\bнепрозрач\w*|\bblack[ -]?out\b|\bбл[эе]каут\w*", lower):
+        return "Непрозрачный материал", "Непрозрачная", "1"
+    if re.search(r"\bзат(?:емн|ен)\w*", lower):
+        return "Затемняющий материал", "Затемняющая", "E"
+    return None
+
+
+def _explicit_fabric(text: str) -> str:
+    for line in text.splitlines():
+        lower = line.lower()
+        if any(marker in lower for marker in ("плотност", "категори", "прозрачност", "цвет")):
+            continue
+        match = re.search(r"(?:коллекци[яи]\s+ткани|материал\s+ткани|ткань)\s*[-–—:]\s*(.+)", line, re.I)
+        if match:
+            return normalize(match.group(1)).rstrip(".;")
+    return ""
+
+
+def _text_position_records(lines: list[str], source_kind: str) -> list[dict[str, Any]]:
+    cleaned_lines = [normalize(line) for line in lines]
+    position_pattern = re.compile(r"^\s*позици[яи]\s*№?\s*(\d+)\s*[.:)]?\s*(.*)$", re.I)
+    starts = [(index, position_pattern.match(line)) for index, line in enumerate(cleaned_lines)]
+    starts = [(index, match) for index, match in starts if match]
+    if not starts:
+        return []
+
+    document_text = "\n".join(cleaned_lines)
+    available_color = "любой из имеющихся в наличии" if re.search(
+        r"цвет\w*[^\n]{0,50}(?:любой|в наличии)", document_text, re.I
+    ) else ""
+    result: list[dict[str, Any]] = []
+    for block_index, (start, marker_match) in enumerate(starts):
+        end = starts[block_index + 1][0] if block_index + 1 < len(starts) else len(cleaned_lines)
+        block_lines = [line for line in cleaned_lines[start:end] if line]
+        block = "\n".join(block_lines)
+        heading = normalize(marker_match.group(2))
+        quantity_match = re.search(r"\b(\d+)\s*(?:шт(?:ук(?:а|и)?|\.)?|единиц\w*)\b", block, re.I)
+        quantity = int(quantity_match.group(1)) if quantity_match else 0
+        if quantity_match:
+            heading = normalize(re.sub(
+                r"\s*[-–—,:;]?\s*\d+\s*(?:шт(?:ук(?:а|и)?|\.)?|единиц\w*)\.?\s*$",
+                "",
+                heading,
+                flags=re.I,
+            ))
+        width, width_range = _text_measurement(block, "ширин")
+        height, height_range = _text_measurement(block, "высот")
+        parsed_width, parsed_height, area = parse_dimensions(block)
+        width = width or parsed_width
+        height = height or parsed_height
+
+        lower = block.lower()
+        if "кассет" in lower or "амг" in lower:
+            system = "AMG"
+        elif "мини" in lower or "mini" in lower:
+            system = "Мини"
+        elif "стандарт" in lower:
+            system = "Стандарт"
+        else:
+            system = ""
+        explicit_fabric = _explicit_fabric(block)
+        default_fabric = None if explicit_fabric else _default_fabric(block)
+        fabric, opacity, default_category = default_fabric or ("", "", "")
+        fabric = explicit_fabric or fabric
+        raw: dict[str, Any] = {
+            "raw_text": block,
+            "structured": bool(heading and quantity and width and height and system and default_category),
+            "text_source": True,
+        }
+        average_dimensions = {
+            key: value
+            for key, value in (("width", width_range), ("height", height_range))
+            if value is not None
+        }
+        if average_dimensions:
+            raw["dimension_average"] = average_dimensions
+        if default_category:
+            raw["default_fabric_category"] = default_category
+            raw["default_fabric_reason"] = "материал не указан в ТЗ"
+        result.append({
+            "source_ref": f"{source_kind}:text:{start + 1}",
+            "name": heading or f"Позиция {marker_match.group(1)}",
+            "quantity": quantity,
+            "width_m": width,
+            "height_m": height,
+            "area_m2": area,
+            "system": system,
+            "fabric": fabric,
+            "color": available_color,
+            "opacity": opacity,
+            **raw,
+        })
+    return result
+
+
 def _docx_records(path: Path) -> list[dict[str, Any]]:
     from docx import Document
     document = Document(path)
@@ -235,7 +368,17 @@ def _docx_records(path: Path) -> list[dict[str, Any]]:
                     "variant": "angular_unverified",
                     "hardware_color": "белая",
                 })
-    return result
+    if result:
+        return result
+    return _text_position_records([paragraph.text for paragraph in document.paragraphs], "docx")
+
+
+def _txt_records(path: Path) -> list[dict[str, Any]]:
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        text = path.read_text(encoding="cp1251")
+    return _text_position_records(text.splitlines(), "txt")
 
 
 def _pdf_records(path: Path) -> list[dict[str, Any]]:
@@ -394,6 +537,8 @@ def extract_records(path: Path) -> list[dict[str, Any]]:
         return _docx_records(path)
     if suffix == ".pdf":
         return _pdf_records(path)
+    if suffix == ".txt":
+        return _txt_records(path)
     raise ValueError(f"Неподдерживаемый формат ТЗ: {suffix}")
 
 

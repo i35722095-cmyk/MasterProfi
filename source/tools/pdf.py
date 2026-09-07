@@ -59,7 +59,12 @@ def _description(item: QuoteItem) -> str:
     else:
         hardware_color = str(item.raw.get("hardware_color") or "белая")
         lines = [f"Рулонные шторы {item.system}, комплектация: {hardware_color}"]
-        if item.fabric:
+        if item.raw.get("default_fabric_category"):
+            category = escape(str(item.category or item.raw["default_fabric_category"]))
+            opacity = escape(item.opacity.lower() or "материал без указанной коллекции")
+            color = f", цвет: {escape(item.color)}" if item.color else ""
+            lines.append(f"Ткань: {opacity}, категория {category} (материал не указан в ТЗ){color}")
+        elif item.fabric:
             lines.append(f"Ткань: {item.fabric} {item.color}, {item.opacity}")
         lines.append("Ручное управление, пластиковая цепь")
         text = "<br/>".join(lines)
@@ -81,7 +86,10 @@ def _size(item: QuoteItem) -> tuple[str, str]:
         return "—", "шт."
     if item.area_m2 is not None and (item.width_m is None or item.height_m is None):
         return f"{float(item.area_m2):.3f}".rstrip("0").rstrip("."), "м²"
-    return f"{round(float(item.width_m or 0) * 1000)}×{round(float(item.height_m or 0) * 1000)}", "мм"
+    size = f"{round(float(item.width_m or 0) * 1000)}×{round(float(item.height_m or 0) * 1000)}"
+    if item.raw.get("dimension_average"):
+        size += '<br/><font color="#666666">(взято среднее диапазона)</font>'
+    return size, "мм"
 
 
 def _manual_item_text(item: QuoteItem) -> str:

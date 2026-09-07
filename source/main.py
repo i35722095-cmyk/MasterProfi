@@ -27,7 +27,7 @@ def main() -> None:
         directory.mkdir(parents=True, exist_ok=True)
     agent_config = load_agent_config()
     llm_config = load_llm_config(select_llm_provider())
-    log("Агент запущен. Ожидаю XLSX, DOCX или PDF в папке input. Остановка: Ctrl+C.")
+    log("Агент запущен. Ожидаю XLSX, DOCX, PDF или TXT в папке input. Остановка: Ctrl+C.")
     log(f"{llm_config.get('display_name', 'LLM')}: {llm_config['model']}; монтаж и доставка отключены.")
     seen: dict[Path, int] = {}
     try:

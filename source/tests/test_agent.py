@@ -85,10 +85,104 @@ def test_structured_xlsx_inherits_product_fields_without_qwen() -> None:
             db.close()
 
 
+def test_text_docx_and_txt_use_average_dimensions_and_default_fabric_categories() -> None:
+    from docx import Document
+    import pdfplumber
+
+    class NoLLM:
+        def __init__(self) -> None:
+            self.calls: list[list[dict]] = []
+
+        def extract_items(self, records, _context):
+            self.calls.append(records)
+            return []
+
+    lines = [
+        "Прошу прислать КП на следующие позиции:",
+        "Позиция 1. Штора рулонная, кассетного типа — 96 штук.",
+        "светозащитная категория ткани — непрозрачная;",
+        "ширина шторы — от 238 до 280 см;",
+        "высота шторы — от 180 до 230 см;",
+        "Позиция 2. Штора рулонная, кассетного типа — 10 штук.",
+        "светозащитная категория ткани — затеняющая;",
+        "ширина шторы — от 238 до 280 см;",
+        "высота шторы — от 170 до 220 см;",
+        "Цвет любой из имеющихся в наличии",
+    ]
+    with TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        docx_path = directory / "текстовое ТЗ.docx"
+        document = Document()
+        for line in lines:
+            document.add_paragraph(line)
+        document.save(docx_path)
+        txt_path = directory / "текстовое ТЗ.txt"
+        txt_path.write_text("\n".join(lines), encoding="utf-8")
+
+        for path in (docx_path, txt_path):
+            records = extract_records(path)
+            assert len(records) == 2
+            assert records[0]["width_m"] == 2.59
+            assert records[0]["height_m"] == 2.05
+            assert records[1]["width_m"] == 2.59
+            assert records[1]["height_m"] == 1.95
+            assert records[0]["default_fabric_category"] == "1"
+            assert records[1]["default_fabric_category"] == "E"
+            assert records[0]["dimension_average"]["width"]["minimum_m"] == 2.38
+            assert records[0]["dimension_average"]["width"]["maximum_m"] == 2.8
+
+        explicit_material = directory / "ТЗ с тканью.txt"
+        explicit_material.write_text(
+            "\n".join([
+                "Позиция 1. Штора рулонная AMG — 1 штука.",
+                "Ткань — Альфа Black-Out белая;",
+                "светозащитная категория ткани — непрозрачная;",
+                "ширина шторы — 100 см;",
+                "высота шторы — 150 см;",
+            ]),
+            encoding="utf-8",
+        )
+        explicit_record = extract_records(explicit_material)[0]
+        assert explicit_record["fabric"] == "Альфа Black-Out белая"
+        assert "default_fabric_category" not in explicit_record
+
+        db = KnowledgeBase()
+        try:
+            initialize_knowledge(db)
+            llm = NoLLM()
+            items = parse_tz(docx_path, llm, db)
+            assert llm.calls == [[]]
+            priced, unresolved, invalid = price_items(items, load_agent_config(), db, logger=silent)
+            assert len(priced) == 2
+            assert not unresolved
+            assert not invalid
+            assert [item.category for item in priced] == ["1", "E"]
+            assert all("Правило по умолчанию" in item.price_source for item in priced)
+
+            pdf = create_quote_pdf(docx_path, priced, load_agent_config(), directory / "quote")
+            with pdfplumber.open(pdf) as proposal:
+                text = " ".join(" ".join(page.extract_text() or "" for page in proposal.pages).split())
+            assert text.count("взято среднее") == 2
+            assert text.count("диапазона") == 2
+            assert "2590×2050" in text
+            assert "2590×1950" in text
+            assert "непрозрачная, категория 1" in text
+            assert "затемняющая, категория E" in text
+            assert text.count("материал не") == 2
+        finally:
+            db.close()
+
+
 def test_public_tools_package_has_no_circular_import() -> None:
     from source.tools import extract_records as public_extract_records
 
     assert public_extract_records is extract_records
+
+
+def test_empty_extraction_report_names_the_real_problem() -> None:
+    text = requires_review_text(Path("пустое ТЗ.docx"), [], [], [])
+    assert "не удалось распознать ни одной позиции" in text
+    assert "наименование, количество и размеры" in text
 
 
 def test_pricing_without_delivery_or_installation() -> None:
@@ -328,8 +422,9 @@ def test_terminal_menu_defers_posix_imports_so_it_loads_on_windows_too() -> None
 
 def test_router_accepts_only_supported_tz_formats() -> None:
     assert select_skill(Path("ТЗ.docx")) == "make_proposal"
+    assert select_skill(Path("ТЗ.txt")) == "make_proposal"
     try:
-        select_skill(Path("ТЗ.txt"))
+        select_skill(Path("ТЗ.csv"))
     except ValueError:
         pass
     else:
@@ -442,7 +537,9 @@ def test_user_can_choose_safe_angular_amg_rule() -> None:
 if __name__ == "__main__":
     test_format_extractors()
     test_structured_xlsx_inherits_product_fields_without_qwen()
+    test_text_docx_and_txt_use_average_dimensions_and_default_fabric_categories()
     test_public_tools_package_has_no_circular_import()
+    test_empty_extraction_report_names_the_real_problem()
     test_pricing_without_delivery_or_installation()
     test_vertical_blinds_area_pricing()
     test_vertical_price_matches_material_inside_catalog_cell()
